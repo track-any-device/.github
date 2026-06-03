@@ -136,8 +136,8 @@ fetch_versions() {
   printf "  %-18s %s\n" "server-api:"      "${TAD_SERVER_API_TAG}"
   printf "  %-18s %s\n" "server-graphql:"  "${TAD_SERVER_GRAPHQL_TAG}"
   printf "  %-18s %s\n" "server-tenant:"   "${TAD_SERVER_TENANT_TAG}"
-  printf "  %-18s %s\n" "server-web:"      "${TAD_SERVER_WEB_TAG}"
   printf "  %-18s %s\n" "jt808-server:"    "${TAD_JT808_TAG}"
+  printf "  %-18s %s\n" "web (Pages):"     "Cloudflare Pages → ${TAD_SERVER_WEB_TAG}"
   echo ""
 }
 
@@ -543,24 +543,9 @@ services:
       GRAPHQL_KEY:    \${GRAPHQL_KEY:-}
       GRAPHQL_SECRET: \${GRAPHQL_SECRET:-}
 
-  web:
-    image: ${ORG}/server-web:${TAD_SERVER_WEB_TAG}
-    container_name: web
-    networks: [tda]
-    restart: unless-stopped
-    environment:
-      NEXT_PUBLIC_APP_URL:  https://\${APP_DOMAIN}
-      GRAPHQL_URL:          http://graphql/graphql
-      GRAPHQL_KEY:          \${GRAPHQL_KEY:-}
-      GRAPHQL_SECRET:       \${GRAPHQL_SECRET:-}
-      API_URL:              http://api
-      # Static SSO client — matches OAuthClientSeeder defaults
-      SSO_CLIENT_ID:     \${WEB_SSO_CLIENT_ID:-${WEB_CLIENT_ID}}
-      SSO_CLIENT_SECRET: \${WEB_SSO_CLIENT_SECRET:-${WEB_CLIENT_SECRET}}
-      SSO_REDIRECT_URI:  https://\${APP_DOMAIN}/sso/callback
-      SSO_AUTH_URL:      https://\${LOGIN_DOMAIN}/oauth/authorize
-      SSO_TOKEN_URL:     https://\${LOGIN_DOMAIN}/oauth/token
-      SSO_USERINFO_URL:  https://\${LOGIN_DOMAIN}/oauth/userinfo
+  # web (Next.js) is deployed to Cloudflare Pages — not a Docker service.
+  # Configure env vars via wrangler.toml or Cloudflare Pages dashboard.
+  # Cloudflare Pages handles track-any-device.com directly; no tunnel needed.
 
   cron:
     <<: *app-base
@@ -868,11 +853,11 @@ show_status() {
   echo "  server-api:      ${TAD_SERVER_API_TAG}"
   echo "  server-graphql:  ${TAD_SERVER_GRAPHQL_TAG}"
   echo "  server-tenant:   ${TAD_SERVER_TENANT_TAG}"
-  echo "  server-web:      ${TAD_SERVER_WEB_TAG}"
   echo "  jt808:           ${TAD_JT808_TAG}"
+  echo "  web (CF Pages):  ${TAD_SERVER_WEB_TAG}  ← deployed via Cloudflare Pages"
   echo ""
   echo -e "${BOLD}── Access ──────────────────────────────────────────────────────${RESET}"
-  echo "  Web + My portal: https://${APP_DOMAIN:-track-any-device.com}"
+  echo "  Web + My portal: https://${APP_DOMAIN:-track-any-device.com}  (Cloudflare Pages)"
   echo "  Admin panel:     https://${ADMIN_DOMAIN:-admin.track-any-device.com}"
   echo "  phpMyAdmin:      http://localhost:3333"
   echo "  MailPit:         http://localhost:8025"

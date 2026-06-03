@@ -156,25 +156,10 @@ services:
       GRAPHQL_SECRET: ${GRAPHQL_SECRET}
 
   # ── Next.js Website + "My" User Portal ──────────────────────────────────────
-  # Source: github.com/track-any-device/web
-  web:
-    image: trackanydevice/server-web:latest
-    container_name: web
-    networks:
-      - tda
-    environment:
-      NEXT_PUBLIC_APP_URL: https://${APP_DOMAIN}
-      GRAPHQL_URL:         http://graphql/graphql
-      GRAPHQL_KEY:         ${GRAPHQL_KEY}
-      GRAPHQL_SECRET:      ${GRAPHQL_SECRET}
-      API_URL:             http://api
-      SSO_CLIENT_ID:       ${WEB_SSO_CLIENT_ID}
-      SSO_CLIENT_SECRET:   ${WEB_SSO_CLIENT_SECRET}
-      SSO_REDIRECT_URI:    https://${APP_DOMAIN}/sso/callback
-      SSO_AUTH_URL:        https://${LOGIN_DOMAIN}/oauth/authorize
-      SSO_TOKEN_URL:       https://${LOGIN_DOMAIN}/oauth/token
-      SSO_USERINFO_URL:    https://${LOGIN_DOMAIN}/oauth/userinfo
-    restart: unless-stopped
+  # Deployed to Cloudflare Pages — NOT a Docker service.
+  # Configure env vars in wrangler.toml or Cloudflare Pages dashboard.
+  # Tunnel: track-any-device.com is served directly by Cloudflare Pages
+  #         (no tunnel ingress rule needed for the web frontend).
 
   # ── Background workers ───────────────────────────────────────────────────────
   cron:
