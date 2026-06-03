@@ -822,30 +822,33 @@ wait_for_db() {
   ok "MySQL ready"
 }
 
-wait_for_cli() {
+wait_for_app() {
   local compose="${INSTALL_DIR}/docker-compose.yml"
-  log "Waiting for CLI container to be ready..."
+  # The 'api' container has the full app code baked in — use it for artisan.
+  # The 'cli' container is a tools-only image (PHP+Composer+pnpm) intended
+  # for local dev with a bind-mount; it has no artisan without one.
+  log "Waiting for API container to be ready..."
   local attempts=0
   until docker compose -f "${compose}" \
-      exec -T -w /var/www/html cli php -r "echo 'ready';" &>/dev/null 2>&1; do
+      exec -T -w /var/www/html api php artisan --version &>/dev/null 2>&1; do
     attempts=$((attempts + 1))
-    [[ $attempts -ge 30 ]] && { err "CLI container did not become ready within 5 minutes."; exit 1; }
+    [[ $attempts -ge 30 ]] && { err "API container did not become ready within 5 minutes."; exit 1; }
     printf "." >/dev/tty
     sleep 10
   done
   echo "" >/dev/tty
-  ok "CLI ready"
+  ok "API container ready"
 }
 
 run_seed() {
   local compose="${INSTALL_DIR}/docker-compose.yml"
 
   log "Running migrations..."
-  run "docker compose -f '${compose}' exec -T -w /var/www/html cli php artisan migrate --force"
+  run "docker compose -f '${compose}' exec -T -w /var/www/html api php artisan migrate --force"
   ok "Migrations complete"
 
   log "Seeding database (device types, OAuth clients, admin user, sample data)..."
-  run "docker compose -f '${compose}' exec -T -w /var/www/html cli php artisan db:seed --force"
+  run "docker compose -f '${compose}' exec -T -w /var/www/html api php artisan db:seed --force"
   ok "Database seeded — OAuth clients created with static IDs"
 }
 
@@ -914,7 +917,7 @@ main() {
     generate_compose
     stack_up
     wait_for_db
-    wait_for_cli
+    wait_for_app
     run_seed
     show_status
 
