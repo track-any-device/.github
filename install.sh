@@ -926,10 +926,24 @@ main() {
   fi
 }
 
-# Persist a copy of this script in INSTALL_DIR for easy updates
-if [[ "${BASH_SOURCE[0]}" != "${INSTALL_DIR}/install.sh" ]] && ! $DRY_RUN && ! $UPDATE_ONLY; then
+# Persist a copy of this script in INSTALL_DIR for easy updates.
+# BASH_SOURCE[0] is unset when piped via curl | bash — handle both cases.
+_persist_script() {
+  ! $DRY_RUN && ! $UPDATE_ONLY || return 0
   mkdir -p "${INSTALL_DIR}" 2>/dev/null || true
-  cp "${BASH_SOURCE[0]}" "${INSTALL_DIR}/install.sh" 2>/dev/null || true
-fi
 
+  local src="${BASH_SOURCE[0]:-}"
+  if [[ -n "$src" && "$src" != "${INSTALL_DIR}/install.sh" ]]; then
+    # Running as a file — just copy it
+    cp "$src" "${INSTALL_DIR}/install.sh" 2>/dev/null && chmod +x "${INSTALL_DIR}/install.sh" || true
+  elif [[ -z "$src" ]]; then
+    # Running via curl | bash — download from GitHub so future --update works
+    curl -fsSL --max-time 15 \
+      "https://raw.githubusercontent.com/track-any-device/.github/main/install.sh" \
+      -o "${INSTALL_DIR}/install.sh" 2>/dev/null && \
+      chmod +x "${INSTALL_DIR}/install.sh" || true
+  fi
+}
+
+_persist_script
 main "$@"
