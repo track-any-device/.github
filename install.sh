@@ -18,16 +18,18 @@
 
 set -euo pipefail
 
-# ── Version matrix (auto-updated by release CI) ───────────────────────────────
+# ── Offline fallback versions ─────────────────────────────────────────────────
+# The script ALWAYS fetches the real latest release tags from GitHub at runtime.
+# These values are only used when GitHub is unreachable (no internet / rate limit).
 # VERSIONS_START
-TAD_SERVER_LOGIN_TAG="v0.4.3"             # bumped by server-login CI
-TAD_SERVER_ADMIN_TAG="v0.0.9"            # bumped by server-admin CI
-TAD_SERVER_API_TAG="v0.1.424-ac19c5e0"  # bumped by app CI
-TAD_SERVER_GRAPHQL_TAG="v0.0.7"          # bumped by server-graphql CI
-TAD_SERVER_TENANT_TAG="latest"           # bumped by server-tenant CI
-TAD_SERVER_WEB_TAG="latest"              # bumped by web CI
-TAD_JT808_TAG="0.1.1"                    # bumped by server-jt808 CI
-TAD_P901_TAG="0.1.1"                     # bumped by server-jt808 CI
+TAD_SERVER_LOGIN_TAG="v0.4.3"
+TAD_SERVER_ADMIN_TAG="v0.0.9"
+TAD_SERVER_API_TAG="v0.1.424-ac19c5e0"
+TAD_SERVER_GRAPHQL_TAG="v0.0.7"
+TAD_SERVER_TENANT_TAG="latest"
+TAD_SERVER_WEB_TAG="latest"
+TAD_JT808_TAG="0.1.1"
+TAD_P901_TAG="0.1.1"
 # VERSIONS_END
 
 # Third-party pinned versions (upgrade intentionally)
@@ -81,6 +83,57 @@ for arg in "$@"; do
     --dir)     shift; INSTALL_DIR="$1" ;;
   esac
 done
+
+# ── Dynamic version resolution ────────────────────────────────────────────────
+# Fetches the latest release tag from each service's GitHub repository.
+# Falls back silently to the hardcoded offline values above if GitHub is
+# unreachable (no internet, rate-limited, or repo has no releases yet).
+
+_gh_latest() {
+  local repo="$1"
+  # Try GitHub API — 5-second timeout so a slow network doesn't hang the script
+  local tag
+  tag=$(curl -fsSL --max-time 5 \
+    "https://api.github.com/repos/track-any-device/${repo}/releases/latest" \
+    2>/dev/null \
+    | python3 -c "import sys,json; print(json.load(sys.stdin).get('tag_name',''))" \
+    2>/dev/null || true)
+  echo "$tag"
+}
+
+fetch_versions() {
+  log "Fetching latest release versions from GitHub..."
+
+  local login admin api graphql tenant web jt808
+
+  login=$(  _gh_latest "server-login")
+  admin=$(   _gh_latest "server-admin")
+  api=$(     _gh_latest "app")
+  graphql=$( _gh_latest "server-graphql")
+  tenant=$(  _gh_latest "server-tenant")
+  web=$(     _gh_latest "web")
+  jt808=$(   _gh_latest "server-jt808")
+
+  # Apply resolved tags, falling back to the offline defaults for any empty result
+  [[ -n "$login"   ]] && TAD_SERVER_LOGIN_TAG="$login"     || warn "server-login:   using fallback ${TAD_SERVER_LOGIN_TAG}"
+  [[ -n "$admin"   ]] && TAD_SERVER_ADMIN_TAG="$admin"     || warn "server-admin:   using fallback ${TAD_SERVER_ADMIN_TAG}"
+  [[ -n "$api"     ]] && TAD_SERVER_API_TAG="$api"         || warn "server-api:     using fallback ${TAD_SERVER_API_TAG}"
+  [[ -n "$graphql" ]] && TAD_SERVER_GRAPHQL_TAG="$graphql" || warn "server-graphql: using fallback ${TAD_SERVER_GRAPHQL_TAG}"
+  [[ -n "$tenant"  ]] && TAD_SERVER_TENANT_TAG="$tenant"   # stays 'latest' if no release
+  [[ -n "$web"     ]] && TAD_SERVER_WEB_TAG="$web"         # stays 'latest' if no release
+  [[ -n "$jt808"   ]] && TAD_JT808_TAG="$jt808" && TAD_P901_TAG="$jt808"
+
+  echo ""
+  echo -e "${BOLD}── Resolved versions ───────────────────────────────────────────${RESET}"
+  printf "  %-18s %s\n" "server-login:"    "${TAD_SERVER_LOGIN_TAG}"
+  printf "  %-18s %s\n" "server-admin:"    "${TAD_SERVER_ADMIN_TAG}"
+  printf "  %-18s %s\n" "server-api:"      "${TAD_SERVER_API_TAG}"
+  printf "  %-18s %s\n" "server-graphql:"  "${TAD_SERVER_GRAPHQL_TAG}"
+  printf "  %-18s %s\n" "server-tenant:"   "${TAD_SERVER_TENANT_TAG}"
+  printf "  %-18s %s\n" "server-web:"      "${TAD_SERVER_WEB_TAG}"
+  printf "  %-18s %s\n" "jt808-server:"    "${TAD_JT808_TAG}"
+  echo ""
+}
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -832,22 +885,23 @@ main() {
   echo ""
   echo -e "${BOLD}╔══════════════════════════════════════════════════════════════════╗"
   echo -e "║   Track Any Device — Platform Installer                          ║"
-  echo -e "║   API: ${TAD_SERVER_API_TAG}$(printf '%*s' $((55 - ${#TAD_SERVER_API_TAG})) '')║"
   echo -e "╚══════════════════════════════════════════════════════════════════╝${RESET}"
 
   check_prerequisites
 
+  # Always fetch the latest release tags from GitHub before doing anything.
+  # Falls back silently to the offline defaults if GitHub is unreachable.
+  fetch_versions
+
   if $UPDATE_ONLY; then
-    # ── UPDATE: silent, no prompts, just version bump ───────────────────────
-    echo ""
-    log "Update mode — regenerating compose with new versions..."
+    # ── UPDATE: pull latest versions, regenerate compose, restart ───────────
     generate_compose
     stack_up
     show_status
-    ok "Update complete. All services running latest pinned versions."
+    ok "Update complete."
 
   else
-    # ── FRESH INSTALL: interactive ──────────────────────────────────────────
+    # ── FRESH INSTALL: interactive prompts → auto-generated .env ────────────
     collect_config
     create_directories
     write_env
