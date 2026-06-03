@@ -15,8 +15,23 @@
 #   docker compose --profile sim     up -d   → 4× P901 GPS simulators
 #   docker compose --profile frp     up -d   → frp tunnel for JT808 TCP
 #
-# Public hostnames are routed by Cloudflare Tunnel — configure ingress rules
-# in Zero Trust → Networks → Tunnels after setting CLOUDFLARE_TUNNEL_TOKEN.
+# ── Image version matrix ─────────────────────────────────────────────────────
+# Bump these when a new release is tagged. Format: v0.1.{commit-count}-{sha}
+#
+#   Service                Image                                    Latest tag
+#   ─────────────────────  ───────────────────────────────────────  ──────────────────────
+#   server-login           trackanydevice/server-login              v0.4.3
+#   server-admin           trackanydevice/server-admin              v0.0.9
+#   server-api             trackanydevice/server-api                v0.1.424-ac19c5e0
+#   server-graphql         trackanydevice/server-graphql            v0.0.7
+#   server-tenant          trackanydevice/server-tenant             (see below)
+#   server-cron            trackanydevice/server-cron               (same as server-api)
+#   server-queue           trackanydevice/server-queue              (same as server-api)
+#   server-cli             trackanydevice/server-cli                (same as server-api)
+#   jt808-server           trackanydevice/jt808-server              0.1.1
+#   p901-device            trackanydevice/p901-device               0.1.1
+#
+#   Third-party images are pinned below — upgrade intentionally, never blindly.
 #
 # Service map:
 #   login     → login.track-any-device.com       SSO identity provider
@@ -31,9 +46,6 @@
 #   pma       → :3333                            phpMyAdmin (dev)
 #   mailtrap  → :8025                            Dev email web UI
 #   influxdb  → :8086                            Time-series telemetry
-#
-# Per-tenant portals (add one block per tenant):
-#   tenant_{slug} → {slug}.track-any-device.com  Tenant operational portal
 # ──────────────────────────────────────────────────────────────────────────────
 
 x-app-base: &app-base
@@ -48,8 +60,6 @@ x-app-base: &app-base
       condition: service_healthy
   restart: unless-stopped
 
-# Shared environment inherited by all Laravel app containers.
-# Override per-service for surface-specific values (APP_KEY, APP_URL, etc.)
 x-app-environment: &app-environment
   APP_ENV:   ${APP_ENV:-production}
   APP_DEBUG: ${APP_DEBUG:-false}
@@ -60,20 +70,17 @@ x-app-environment: &app-environment
   ADMIN_DOMAIN:    ${ADMIN_DOMAIN:-admin.track-any-device.com}
   GRAPHQL_DOMAIN:  ${GRAPHQL_DOMAIN:-graphql.track-any-device.com}
   MY_DOMAIN:       ${MY_DOMAIN:-track-any-device.com}
-  # Database
   DB_CONNECTION: mysql
   DB_HOST:       mysql
   DB_PORT:       3306
   DB_DATABASE:   ${MYSQL_DATABASE}
   DB_USERNAME:   ${MYSQL_USER}
   DB_PASSWORD:   ${MYSQL_PASSWORD}
-  # Cache / Queue / Session
   CACHE_STORE:      redis
   QUEUE_CONNECTION: redis
   SESSION_DRIVER:   redis
   REDIS_HOST:       redis
   REDIS_PORT:       6379
-  # Broadcasting
   BROADCAST_CONNECTION: pusher
   PUSHER_APP_ID:     ${PUSHER_APP_ID}
   PUSHER_APP_KEY:    ${PUSHER_APP_KEY}
@@ -82,30 +89,24 @@ x-app-environment: &app-environment
   PUSHER_PORT:       6001
   PUSHER_SCHEME:     http
   PUSHER_APP_CLUSTER: mt1
-  # Mail
   MAIL_MAILER:       smtp
   MAIL_HOST:         mailtrap
   MAIL_PORT:         1025
   MAIL_FROM_ADDRESS: noreply@track-any-device.com
-  # InfluxDB
   INFLUXDB_HOST:   influxdb
   INFLUXDB_PORT:   8086
   INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-device_locations}
   INFLUXDB_ORG:    ${INFLUXDB_ORG:-track-any-device}
   INFLUXDB_TOKEN:  ${INFLUXDB_TOKEN}
-  # Passport keys (shared between login and api)
   PASSPORT_PRIVATE_KEY_B64: ${PASSPORT_PRIVATE_KEY_B64}
   PASSPORT_PUBLIC_KEY_B64:  ${PASSPORT_PUBLIC_KEY_B64}
 
 services:
 
   # ── SSO Identity Provider ────────────────────────────────────────────────────
-  # Handles login, registration, 2FA, OAuth2 authorization codes.
-  # Every other service redirects unauthenticated users here.
-  # Source: github.com/track-any-device/server-login
   login:
     <<: *app-base
-    image: trackanydevice/server-login:latest
+    image: trackanydevice/server-login:v0.4.3
     container_name: login
     volumes:
       - app_storage:/app/storage/app
@@ -114,16 +115,14 @@ services:
       APP_URL:        https://${LOGIN_DOMAIN}
       APP_KEY:        ${LOGIN_APP_KEY}
       SESSION_COOKIE: login_session
-      SMS_MASTER_NUMBER: ${SMS_MASTER_NUMBER}
-      SMS_GATEWAY_URL:   ${SMS_GATEWAY_URL}
+      SMS_MASTER_NUMBER:   ${SMS_MASTER_NUMBER}
+      SMS_GATEWAY_URL:     ${SMS_GATEWAY_URL}
       SMS_GATEWAY_API_KEY: ${SMS_GATEWAY_API_KEY}
 
   # ── Filament Admin Panel ─────────────────────────────────────────────────────
-  # Central staff — manage tenants, devices, incidents, API keys.
-  # Source: github.com/track-any-device/server-admin
   admin:
     <<: *app-base
-    image: trackanydevice/server-admin:latest
+    image: trackanydevice/server-admin:v0.0.9
     container_name: admin
     volumes:
       - app_storage:/app/storage/app
@@ -134,11 +133,9 @@ services:
       SESSION_COOKIE: admin_session
 
   # ── Central REST API Server ──────────────────────────────────────────────────
-  # Serves /api/*: mobile, my portal, tenant portal. Stateless JSON only.
-  # Source: github.com/track-any-device/app
   api:
     <<: *app-base
-    image: trackanydevice/server-api:latest
+    image: trackanydevice/server-api:v0.1.424-ac19c5e0
     container_name: api
     environment:
       <<: *app-environment
@@ -146,12 +143,9 @@ services:
       APP_KEY: ${API_APP_KEY}
 
   # ── GraphQL API ──────────────────────────────────────────────────────────────
-  # Public content (device types, solutions) + central staff queries.
-  # Also serves the GraphQL Explorer UI.
-  # Source: github.com/track-any-device/server-graphql
   graphql:
     <<: *app-base
-    image: trackanydevice/server-graphql:latest
+    image: trackanydevice/server-graphql:v0.0.7
     container_name: graphql
     environment:
       <<: *app-environment
@@ -161,8 +155,7 @@ services:
       GRAPHQL_KEY:    ${GRAPHQL_KEY}
       GRAPHQL_SECRET: ${GRAPHQL_SECRET}
 
-  # ── Next.js Public Website + "My" User Portal ────────────────────────────────
-  # Marketing site, docs, product catalogue, and the authenticated /my/* portal.
+  # ── Next.js Website + "My" User Portal ──────────────────────────────────────
   # Source: github.com/track-any-device/web
   web:
     image: trackanydevice/server-web:latest
@@ -186,7 +179,7 @@ services:
   # ── Background workers ───────────────────────────────────────────────────────
   cron:
     <<: *app-base
-    image: trackanydevice/server-cron:latest
+    image: trackanydevice/server-cron:v0.1.424-ac19c5e0
     container_name: cron
     environment:
       <<: *app-environment
@@ -194,16 +187,14 @@ services:
 
   queue:
     <<: *app-base
-    image: trackanydevice/server-queue:latest
+    image: trackanydevice/server-queue:v0.1.424-ac19c5e0
     container_name: queue
     environment:
       <<: *app-environment
       APP_KEY: ${API_APP_KEY}
 
-  # ── Developer CLI ────────────────────────────────────────────────────────────
-  # php artisan migrate --seed, composer, etc.
   cli:
-    image: trackanydevice/server-cli:latest
+    image: trackanydevice/server-cli:v0.1.424-ac19c5e0
     container_name: cli
     networks:
       - tda
@@ -218,33 +209,32 @@ services:
     restart: unless-stopped
 
   # ── JT808 GPS TCP Server ─────────────────────────────────────────────────────
-  # Accepts binary JT808 frames from GPS trackers on port 7018.
   # Source: github.com/track-any-device/server-jt808
   jt808:
-    image: trackanydevice/jt808-server:latest
+    image: trackanydevice/jt808-server:0.1.1
     container_name: jt808
     ports:
       - "7018:7018"   # JT808 TCP — point GPS devices here
       - "9090:9090"   # Prometheus metrics + /healthz
     environment:
-      JT808_TCP_ADDR:       :7018
-      JT808_HTTP_ADDR:      :9090
-      REDIS_HOST:           redis
-      REDIS_PORT:           6379
-      STREAM_KEY:           jt808:telemetry
-      STREAM_MAX_LEN:       100000
-      SESSION_PREFIX:       "jt808:session:"
-      AUTH_TOKEN_PREFIX:    "jt808:authtoken:"
-      ONLINE_Z_KEY:         jt808:online
-      CMD_CHANNEL:          "jt808:cmd:"
-      AUTH_TIMEOUT:         30s
-      HEARTBEAT_TIMEOUT:    3m
-      DB_HOST:              mysql
-      DB_PORT:              3306
-      DB_DATABASE:          ${MYSQL_DATABASE}
-      DB_USERNAME:          ${MYSQL_USER}
-      DB_PASSWORD:          ${MYSQL_PASSWORD}
-      DB_DEVICE_TYPE_ID:    ${JT808_DEVICE_TYPE_ID:-1}
+      JT808_TCP_ADDR:    :7018
+      JT808_HTTP_ADDR:   :9090
+      REDIS_HOST:        redis
+      REDIS_PORT:        6379
+      STREAM_KEY:        jt808:telemetry
+      STREAM_MAX_LEN:    100000
+      SESSION_PREFIX:    "jt808:session:"
+      AUTH_TOKEN_PREFIX: "jt808:authtoken:"
+      ONLINE_Z_KEY:      jt808:online
+      CMD_CHANNEL:       "jt808:cmd:"
+      AUTH_TIMEOUT:      30s
+      HEARTBEAT_TIMEOUT: 3m
+      DB_HOST:           mysql
+      DB_PORT:           3306
+      DB_DATABASE:       ${MYSQL_DATABASE}
+      DB_USERNAME:       ${MYSQL_USER}
+      DB_PASSWORD:       ${MYSQL_PASSWORD}
+      DB_DEVICE_TYPE_ID: ${JT808_DEVICE_TYPE_ID:-1}
     networks:
       - tda
     depends_on:
@@ -261,25 +251,22 @@ services:
     restart: unless-stopped
 
   # ── Per-tenant Portals ───────────────────────────────────────────────────────
-  # One service block per tenant. Copy this block and replace the values.
-  # Run: docker compose up -d tenant_{slug}
-  # Then add a Cloudflare Tunnel ingress: {slug}.tad.com → tenant_{slug}:80
   # Source: github.com/track-any-device/server-tenant
+  # One block per tenant. Uncomment and fill in values for each.
   #
   # tenant_acme:
   #   image: trackanydevice/server-tenant:latest
   #   container_name: tenant_acme
-  #   networks:
-  #     - tda
+  #   networks: [tda]
   #   restart: unless-stopped
   #   environment:
   #     APP_ENV: production
-  #     APP_KEY: <unique key — php artisan key:generate --show>
+  #     APP_KEY: <generate: php artisan key:generate --show>
   #     APP_URL: https://acme.track-any-device.com
   #     APP_SURFACE: tenant
   #     APP_TENANT_SLUG: acme
-  #     APP_TENANT_ID: <id from admin panel>
-  #     APP_TENANT_API_KEY: <from admin panel — Portal API Keys tab>
+  #     APP_TENANT_ID: <from admin panel>
+  #     APP_TENANT_API_KEY: <from Portal API Keys tab>
   #     SSO_CLIENT_ID: <from admin panel>
   #     SSO_CLIENT_SECRET: <from admin panel>
   #     SSO_REDIRECT_URI: https://acme.track-any-device.com/sso/callback
@@ -290,8 +277,10 @@ services:
   #     DB_DATABASE: ${MYSQL_DATABASE}
   #     DB_USERNAME: ${MYSQL_USER}
   #     DB_PASSWORD: ${MYSQL_PASSWORD}
+  #     REDIS_HOST: redis
+  #     REDIS_PORT: 6379
+  #     SESSION_DRIVER: redis
   #     SESSION_COOKIE: tenant_acme_session
-  #     SESSION_DRIVER: database
   #     PUSHER_APP_KEY: ${PUSHER_APP_KEY}
   #     PUSHER_HOST: soketi
   #     PUSHER_PORT: 6001
@@ -303,6 +292,7 @@ services:
   # ── Infrastructure ───────────────────────────────────────────────────────────
 
   mysql:
+    # Pinned to 8.0.32 — do not upgrade without testing migrations.
     image: mysql:8.0.32
     container_name: mysql
     init: true
@@ -325,6 +315,7 @@ services:
     restart: unless-stopped
 
   redis:
+    # 7-alpine — upgrade to 8-alpine when tested.
     image: redis:7-alpine
     container_name: redis
     ports:
@@ -334,7 +325,7 @@ services:
     restart: unless-stopped
 
   soketi:
-    image: 'quay.io/soketi/soketi:1.4-16-alpine'
+    image: quay.io/soketi/soketi:1.4-16-alpine
     container_name: soketi
     environment:
       SOKETI_DEFAULT_APP_ID:     ${PUSHER_APP_ID}
@@ -376,7 +367,7 @@ services:
     restart: unless-stopped
 
   mailtrap:
-    image: axllent/mailpit:latest
+    image: axllent/mailpit:v1.24.0
     container_name: mailtrap
     ports:
       - "1025:1025"   # SMTP
@@ -386,7 +377,7 @@ services:
     restart: unless-stopped
 
   pma:
-    image: phpmyadmin/phpmyadmin
+    image: phpmyadmin/phpmyadmin:5.2.2
     container_name: pma
     environment:
       PMA_HOST:     mysql
@@ -401,10 +392,9 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # Cloudflare Tunnel — routes public hostnames to containers.
-  # Configure ingress in Zero Trust → Networks → Tunnels.
+  # Cloudflare Tunnel — routes public hostnames to containers without open ports.
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    image: cloudflare/cloudflared:2025.5.0
     container_name: cloudflared
     command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
     environment:
@@ -415,7 +405,6 @@ services:
     restart: unless-stopped
 
   # ── Logging stack (profile: logging) ────────────────────────────────────────
-  # docker compose --profile logging up -d → Grafana at http://localhost:3000
   loki:
     image: grafana/loki:3.5.0
     container_name: loki
@@ -453,7 +442,6 @@ services:
     restart: unless-stopped
 
   # ── frp tunnel (profile: frp) ────────────────────────────────────────────────
-  # GPS trackers → <vps>:7018 → frps → frpc → jt808:7018
   frpc:
     image: snowdreamtech/frpc:0.61.1
     container_name: frpc
@@ -469,10 +457,8 @@ services:
     restart: unless-stopped
 
   # ── P901 GPS device simulators (profile: sim) ───────────────────────────────
-  # 4 simulated GPS trackers streaming to jt808:7018 for development.
-  # docker compose --profile sim up -d
   p901-0:
-    image: trackanydevice/p901-device:latest
+    image: trackanydevice/p901-device:0.1.1
     container_name: p901-0
     environment: {DEVICE_IMEI: "00000000000000", SERVER_ADDR: "jt808:7018", INITIAL_LAT: "31.5204", INITIAL_LON: "74.3587", INITIAL_HEADING: "45",  INITIAL_SPEED: "40"}
     depends_on: {jt808: {condition: service_healthy}}
@@ -481,7 +467,7 @@ services:
     restart: unless-stopped
 
   p901-1:
-    image: trackanydevice/p901-device:latest
+    image: trackanydevice/p901-device:0.1.1
     container_name: p901-1
     environment: {DEVICE_IMEI: "11111111111111", SERVER_ADDR: "jt808:7018", INITIAL_LAT: "31.5304", INITIAL_LON: "74.3687", INITIAL_HEADING: "90",  INITIAL_SPEED: "60"}
     depends_on: {jt808: {condition: service_healthy}}
@@ -490,7 +476,7 @@ services:
     restart: unless-stopped
 
   p901-2:
-    image: trackanydevice/p901-device:latest
+    image: trackanydevice/p901-device:0.1.1
     container_name: p901-2
     environment: {DEVICE_IMEI: "22222222222222", SERVER_ADDR: "jt808:7018", INITIAL_LAT: "31.5104", INITIAL_LON: "74.3287", INITIAL_HEADING: "180", INITIAL_SPEED: "30"}
     depends_on: {jt808: {condition: service_healthy}}
@@ -499,7 +485,7 @@ services:
     restart: unless-stopped
 
   p901-3:
-    image: trackanydevice/p901-device:latest
+    image: trackanydevice/p901-device:0.1.1
     container_name: p901-3
     environment: {DEVICE_IMEI: "33333333333333", SERVER_ADDR: "jt808:7018", INITIAL_LAT: "31.5404", INITIAL_LON: "74.3787", INITIAL_HEADING: "270", INITIAL_SPEED: "50"}
     depends_on: {jt808: {condition: service_healthy}}
