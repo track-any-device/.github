@@ -1,37 +1,36 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────────────────────────
-# Track Any Device — Platform Install / Update Script
+# Track Any Device — Platform Installer / Updater
 #
-# Usage — fresh install:
+# Fresh install (interactive, auto-generates all secrets):
+#   bash install.sh
+#   — or —
 #   curl -fsSL https://raw.githubusercontent.com/track-any-device/.github/main/install.sh | bash
 #
-# Usage — update running stack to latest pinned versions:
+# Update to latest pinned versions (silent, no prompts):
 #   bash install.sh --update
 #
 # Options:
-#   --update    Pull new images and restart changed services (skip .env creation)
-#   --dir PATH  Override install directory (default: ~/tad or $TAD_DIR)
-#   --dry-run   Print what would happen without making any changes
+#   --update      Pull new images + restart changed services. No prompts.
+#   --dir PATH    Override install directory (default: ~/tad or $TAD_DIR)
+#   --dry-run     Print what would happen without making changes
 # ──────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
 
-# ── Version matrix ────────────────────────────────────────────────────────────
-# Auto-updated by each server app's release CI workflow.
-# Do not edit manually — use the release workflow or bump via GitHub Actions.
-#
+# ── Version matrix (auto-updated by release CI) ───────────────────────────────
 # VERSIONS_START
-TAD_SERVER_LOGIN_TAG="v0.4.3"                # bumped by server-login CI
-TAD_SERVER_ADMIN_TAG="v0.0.9"               # bumped by server-admin CI
-TAD_SERVER_API_TAG="v0.1.424-ac19c5e0"      # bumped by app CI (api/cron/queue/cli)
-TAD_SERVER_GRAPHQL_TAG="v0.0.7"             # bumped by server-graphql CI
-TAD_SERVER_TENANT_TAG="latest"              # bumped by server-tenant CI
-TAD_SERVER_WEB_TAG="latest"                 # bumped by web CI
-TAD_JT808_TAG="0.1.1"                       # bumped by server-jt808 CI
-TAD_P901_TAG="0.1.1"                        # bumped by server-jt808 CI (simulator)
+TAD_SERVER_LOGIN_TAG="v0.4.3"             # bumped by server-login CI
+TAD_SERVER_ADMIN_TAG="v0.0.9"            # bumped by server-admin CI
+TAD_SERVER_API_TAG="v0.1.424-ac19c5e0"  # bumped by app CI
+TAD_SERVER_GRAPHQL_TAG="v0.0.7"          # bumped by server-graphql CI
+TAD_SERVER_TENANT_TAG="latest"           # bumped by server-tenant CI
+TAD_SERVER_WEB_TAG="latest"              # bumped by web CI
+TAD_JT808_TAG="0.1.1"                    # bumped by server-jt808 CI
+TAD_P901_TAG="0.1.1"                     # bumped by server-jt808 CI
 # VERSIONS_END
 
-# Third-party image pins — upgrade intentionally after testing.
+# Third-party pinned versions (upgrade intentionally)
 MYSQL_VERSION="8.0.32"
 REDIS_VERSION="7-alpine"
 SOKETI_VERSION="1.4-16-alpine"
@@ -43,32 +42,79 @@ GRAFANA_VERSION="11.6.0"
 LOKI_VERSION="3.5.0"
 FRPC_VERSION="0.61.1"
 
+# ── Static OAuth client credentials (seeded automatically by db:seed) ─────────
+# These match OAuthClientSeeder in package-sso-server.
+# Web and mobile apps embed these as defaults — no configuration needed.
+WEB_CLIENT_ID="tad_web_portal"
+WEB_CLIENT_SECRET="tad_web_portal_secret"
+MY_CLIENT_ID="tad_my_portal"
+MY_CLIENT_SECRET="tad_my_portal_secret"
+ADMIN_CLIENT_ID="tad_admin_panel"
+ADMIN_CLIENT_SECRET="tad_admin_panel_secret"
+GRAPHQL_CLIENT_ID="tad_graphql_api"
+GRAPHQL_CLIENT_SECRET="tad_graphql_api_secret"
+MOBILE_CLIENT_ID="tad_mobile_tad101"   # PKCE — no secret
+
 # ── Config ────────────────────────────────────────────────────────────────────
 INSTALL_DIR="${TAD_DIR:-$HOME/tad}"
 ORG="trackanydevice"
-SCRIPT_VERSION="$(grep -m1 'TAD_SERVER_API_TAG' "$0" | grep -oP '(?<=\").*(?=\")')"
 DRY_RUN=false
 UPDATE_ONLY=false
 
 # ── Colours ───────────────────────────────────────────────────────────────────
 BOLD="\033[1m"; RESET="\033[0m"
-GREEN="\033[32m"; YELLOW="\033[33m"; RED="\033[31m"; CYAN="\033[36m"
+GREEN="\033[32m"; YELLOW="\033[33m"; RED="\033[31m"; CYAN="\033[36m"; DIM="\033[2m"
 
 log()  { echo -e "${BOLD}${CYAN}[TAD]${RESET} $*"; }
 ok()   { echo -e "${BOLD}${GREEN}  ✓${RESET}  $*"; }
 warn() { echo -e "${BOLD}${YELLOW}  !${RESET}  $*"; }
 err()  { echo -e "${BOLD}${RED}  ✗${RESET}  $*" >&2; }
+dim()  { echo -e "${DIM}  $*${RESET}"; }
 run()  { if $DRY_RUN; then echo -e "  ${YELLOW}[dry]${RESET} $*"; else eval "$*"; fi; }
 
 # ── Parse arguments ───────────────────────────────────────────────────────────
 for arg in "$@"; do
   case $arg in
-    --update)   UPDATE_ONLY=true ;;
-    --dry-run)  DRY_RUN=true ;;
-    --dir=*)    INSTALL_DIR="${arg#*=}" ;;
-    --dir)      shift; INSTALL_DIR="$1" ;;
+    --update)  UPDATE_ONLY=true ;;
+    --dry-run) DRY_RUN=true ;;
+    --dir=*)   INSTALL_DIR="${arg#*=}" ;;
+    --dir)     shift; INSTALL_DIR="$1" ;;
   esac
 done
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+# Read user input from /dev/tty so curl | bash works (stdin is the pipe)
+ask() {
+  local label="$1" default="${2:-}" _answer
+  if [[ -n "$default" ]]; then
+    printf "  %s [%s]: " "$label" "$default" >/dev/tty
+  else
+    printf "  %s: " "$label" >/dev/tty
+  fi
+  IFS= read -r _answer </dev/tty || true
+  echo "${_answer:-$default}"
+}
+
+ask_secret() {
+  local label="$1" _answer
+  printf "  %s [auto-generate]: " "$label" >/dev/tty
+  IFS= read -rs _answer </dev/tty || true
+  echo "" >/dev/tty
+  echo "$_answer"
+}
+
+confirm() {
+  local label="$1" _answer
+  printf "  %s [Y/n]: " "$label" >/dev/tty
+  IFS= read -r _answer </dev/tty || true
+  [[ "${_answer:-Y}" =~ ^[Yy]$ ]]
+}
+
+gen_password()  { openssl rand -base64 18 | tr -d '=+/'; }
+gen_hex()       { openssl rand -hex 24; }
+gen_app_key()   { echo "base64:$(openssl rand -base64 32)"; }
+gen_pusher_id() { echo "tad-$(openssl rand -hex 6)"; }
 
 # ── Prerequisites ─────────────────────────────────────────────────────────────
 check_prerequisites() {
@@ -76,8 +122,7 @@ check_prerequisites() {
   local missing=()
 
   command -v docker  &>/dev/null || missing+=("docker")
-  command -v curl    &>/dev/null || missing+=("curl")
-  command -v python3 &>/dev/null || missing+=("python3")
+  command -v openssl &>/dev/null || missing+=("openssl")
 
   if [[ ${#missing[@]} -gt 0 ]]; then
     err "Missing required tools: ${missing[*]}"
@@ -85,10 +130,8 @@ check_prerequisites() {
     exit 1
   fi
 
-  # docker compose v2 check
   if ! docker compose version &>/dev/null; then
-    err "Docker Compose v2 is required (docker compose, not docker-compose)."
-    echo "  Install: https://docs.docker.com/compose/install/"
+    err "Docker Compose v2 required. Install: https://docs.docker.com/compose/install/"
     exit 1
   fi
 
@@ -96,133 +139,233 @@ check_prerequisites() {
   ok "Docker Compose $(docker compose version --short)"
 }
 
+# ── Interactive configuration gathering ───────────────────────────────────────
+collect_config() {
+  echo ""
+  echo -e "${BOLD}── Step 1/4 — Domain ───────────────────────────────────────────${RESET}"
+  echo ""
+
+  CFG_DOMAIN=$(ask "Main domain" "track-any-device.com")
+  CFG_SCHEME="https"
+
+  # Derive subdomains
+  CFG_LOGIN_DOMAIN="login.${CFG_DOMAIN}"
+  CFG_ADMIN_DOMAIN="admin.${CFG_DOMAIN}"
+  CFG_GRAPHQL_DOMAIN="graphql.${CFG_DOMAIN}"
+
+  echo ""
+  dim "  Subdomains derived:"
+  dim "    Login:   ${CFG_LOGIN_DOMAIN}"
+  dim "    Admin:   ${CFG_ADMIN_DOMAIN}"
+  dim "    GraphQL: ${CFG_GRAPHQL_DOMAIN}"
+  dim "    API:     api.${CFG_DOMAIN}"
+  dim "    Web/My:  ${CFG_DOMAIN}/my"
+  echo ""
+
+  echo -e "${BOLD}── Step 2/4 — Database ─────────────────────────────────────────${RESET}"
+  echo ""
+
+  CFG_MYSQL_DB=$(ask "Database name" "tad")
+  CFG_MYSQL_USER=$(ask "Database user" "tad")
+
+  # Auto-generate passwords (user can override but rarely needs to)
+  local root_input
+  root_input=$(ask_secret "MySQL root password (blank to auto-generate)")
+  CFG_MYSQL_ROOT_PASS="${root_input:-$(gen_password)}"
+
+  local pass_input
+  pass_input=$(ask_secret "MySQL user password (blank to auto-generate)")
+  CFG_MYSQL_PASS="${pass_input:-$(gen_password)}"
+
+  ok "Database: ${CFG_MYSQL_USER}@mysql/${CFG_MYSQL_DB}"
+
+  echo ""
+  echo -e "${BOLD}── Step 3/4 — Optional Services ────────────────────────────────${RESET}"
+  echo ""
+
+  CFG_CF_TOKEN=$(ask "Cloudflare Tunnel token (blank to skip)")
+  CFG_SMS_URL=$(ask   "SMS Gateway URL (blank to skip)")
+  CFG_SMS_KEY=""
+  CFG_SMS_NUMBER=""
+  if [[ -n "${CFG_SMS_URL}" ]]; then
+    CFG_SMS_KEY=$(ask "SMS Gateway API key")
+    CFG_SMS_NUMBER=$(ask "SMS master number (e.g. +92300000000)")
+  fi
+
+  echo ""
+  echo -e "${BOLD}── Step 4/4 — Generating secrets ───────────────────────────────${RESET}"
+  echo ""
+
+  # App encryption keys
+  CFG_LOGIN_KEY=$(gen_app_key);   ok "Login app key"
+  CFG_ADMIN_KEY=$(gen_app_key);   ok "Admin app key"
+  CFG_API_KEY=$(gen_app_key);     ok "API app key"
+  CFG_GRAPHQL_KEY=$(gen_app_key); ok "GraphQL app key"
+
+  # Pusher / Soketi
+  CFG_PUSHER_ID=$(gen_pusher_id)
+  CFG_PUSHER_KEY=$(gen_hex)
+  CFG_PUSHER_SECRET=$(gen_hex)
+  ok "Pusher credentials  (ID: ${CFG_PUSHER_ID})"
+
+  # InfluxDB
+  CFG_INFLUX_PASS=$(gen_password)
+  CFG_INFLUX_TOKEN=$(gen_hex)
+  ok "InfluxDB credentials"
+
+  # Passport RSA keys (4096-bit, takes ~5-10 seconds)
+  echo -ne "  Generating Passport RSA keys (4096-bit)..." >/dev/tty
+  local priv_pem
+  priv_pem=$(openssl genrsa 4096 2>/dev/null)
+  CFG_PASSPORT_PRIVATE=$(echo "$priv_pem" | openssl base64 -A)
+  CFG_PASSPORT_PUBLIC=$(echo "$priv_pem" | openssl rsa -pubout 2>/dev/null | openssl base64 -A)
+  echo " done" >/dev/tty
+  ok "Passport RSA key pair"
+
+  echo ""
+  ok "OAuth clients (pre-seeded, no action needed):"
+  dim "    Web portal:    ${WEB_CLIENT_ID} / ${WEB_CLIENT_SECRET}"
+  dim "    Admin panel:   ${ADMIN_CLIENT_ID} / ${ADMIN_CLIENT_SECRET}"
+  dim "    GraphQL:       ${GRAPHQL_CLIENT_ID} / ${GRAPHQL_CLIENT_SECRET}"
+  dim "    Mobile (PKCE): ${MOBILE_CLIENT_ID} (no secret)"
+  echo ""
+
+  # Final confirmation
+  echo -e "${BOLD}── Configuration summary ───────────────────────────────────────${RESET}"
+  echo ""
+  echo "  Install directory:  ${INSTALL_DIR}"
+  echo "  Domain:             ${CFG_DOMAIN}"
+  echo "  Database:           ${CFG_MYSQL_USER}@mysql/${CFG_MYSQL_DB}"
+  echo "  Cloudflare Tunnel:  ${CFG_CF_TOKEN:-(skipped)}"
+  echo "  SMS Gateway:        ${CFG_SMS_URL:-(skipped)}"
+  echo ""
+
+  if ! confirm "Proceed with installation?"; then
+    echo "Aborted."
+    exit 0
+  fi
+}
+
+# ── Write fully-populated .env ─────────────────────────────────────────────────
+write_env() {
+  local env_file="${INSTALL_DIR}/.env"
+
+  if [[ -f "$env_file" ]]; then
+    warn ".env already exists — skipping. Delete it to reconfigure, or edit directly."
+    # Source it so wait_for_db can read MYSQL_ROOT_PASSWORD
+    set -a; source "$env_file" 2>/dev/null || true; set +a
+    return
+  fi
+
+  log "Writing ${env_file}..."
+
+  if $DRY_RUN; then
+    echo "  [dry] Would write complete .env to ${env_file}"
+    return
+  fi
+
+  cat > "$env_file" <<ENV
+# ──────────────────────────────────────────────────────────────────────────────
+# Track Any Device — Platform Environment
+# Generated by install.sh on $(date -u +"%Y-%m-%d %H:%M UTC")
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ── Domain ────────────────────────────────────────────────────────────────────
+APP_DOMAIN=${CFG_DOMAIN}
+LOGIN_DOMAIN=${CFG_LOGIN_DOMAIN}
+ADMIN_DOMAIN=${CFG_ADMIN_DOMAIN}
+GRAPHQL_DOMAIN=${CFG_GRAPHQL_DOMAIN}
+SESSION_DOMAIN=.${CFG_DOMAIN}
+
+# ── App encryption keys ───────────────────────────────────────────────────────
+LOGIN_APP_KEY=${CFG_LOGIN_KEY}
+ADMIN_APP_KEY=${CFG_ADMIN_KEY}
+API_APP_KEY=${CFG_API_KEY}
+GRAPHQL_APP_KEY=${CFG_GRAPHQL_KEY}
+
+# ── Database ──────────────────────────────────────────────────────────────────
+MYSQL_ROOT_PASSWORD=${CFG_MYSQL_ROOT_PASS}
+MYSQL_DATABASE=${CFG_MYSQL_DB}
+MYSQL_USER=${CFG_MYSQL_USER}
+MYSQL_PASSWORD=${CFG_MYSQL_PASS}
+
+# ── Real-time (Pusher / Soketi) ───────────────────────────────────────────────
+PUSHER_APP_ID=${CFG_PUSHER_ID}
+PUSHER_APP_KEY=${CFG_PUSHER_KEY}
+PUSHER_APP_SECRET=${CFG_PUSHER_SECRET}
+
+# ── Time-series telemetry (InfluxDB) ─────────────────────────────────────────
+INFLUXDB_USER=admin
+INFLUXDB_PASSWORD=${CFG_INFLUX_PASS}
+INFLUXDB_ORG=track-any-device
+INFLUXDB_BUCKET=device_locations
+INFLUXDB_TOKEN=${CFG_INFLUX_TOKEN}
+
+# ── Passport OAuth2 RSA keys ──────────────────────────────────────────────────
+# Generated at install time. Do not lose these — Passport tokens are signed
+# with the private key and verified with the public key.
+# To rotate: generate new keys and restart login + api + graphql + admin.
+PASSPORT_PRIVATE_KEY_B64=${CFG_PASSPORT_PRIVATE}
+PASSPORT_PUBLIC_KEY_B64=${CFG_PASSPORT_PUBLIC}
+
+# ── Static OAuth clients (seeded automatically by php artisan db:seed) ────────
+# These are baked into the web and mobile apps as default values.
+# No additional configuration needed for web portal or mobile app.
+# To rotate for production: update these values, delete the oauth_clients rows,
+# and re-run php artisan db:seed.
+WEB_SSO_CLIENT_ID=${WEB_CLIENT_ID}
+WEB_SSO_CLIENT_SECRET=${WEB_CLIENT_SECRET}
+MY_SSO_CLIENT_ID=${MY_CLIENT_ID}
+MY_SSO_CLIENT_SECRET=${MY_CLIENT_SECRET}
+ADMIN_SSO_CLIENT_ID=${ADMIN_CLIENT_ID}
+ADMIN_SSO_CLIENT_SECRET=${ADMIN_CLIENT_SECRET}
+GRAPHQL_SSO_CLIENT_ID=${GRAPHQL_CLIENT_ID}
+GRAPHQL_SSO_CLIENT_SECRET=${GRAPHQL_CLIENT_SECRET}
+MOBILE_CLIENT_ID=${MOBILE_CLIENT_ID}
+# Mobile uses PKCE — no client secret stored
+
+# ── Cloudflare Tunnel ─────────────────────────────────────────────────────────
+# Configure public hostnames in Zero Trust → Networks → Tunnels.
+CLOUDFLARE_TUNNEL_TOKEN=${CFG_CF_TOKEN:-}
+
+# ── SMS Gateway (optional) ────────────────────────────────────────────────────
+SMS_GATEWAY_URL=${CFG_SMS_URL:-}
+SMS_GATEWAY_API_KEY=${CFG_SMS_KEY:-}
+SMS_MASTER_NUMBER=${CFG_SMS_NUMBER:-}
+
+# ── JT808 GPS protocol ────────────────────────────────────────────────────────
+JT808_DEVICE_TYPE_ID=1
+
+# ── Optional / advanced ───────────────────────────────────────────────────────
+# GraphQL M2M bearer token (for server-to-server API calls)
+GRAPHQL_KEY=
+GRAPHQL_SECRET=
+
+# frp tunnel (docker compose --profile frp up -d)
+FRP_SERVER_ADDR=
+FRP_TOKEN=change-me
+ENV
+
+  ok ".env written — all secrets generated, no manual editing required"
+
+  # Make MYSQL_ROOT_PASSWORD available to wait_for_db in this shell
+  MYSQL_ROOT_PASSWORD="${CFG_MYSQL_ROOT_PASS}"
+}
+
 # ── Directory structure ───────────────────────────────────────────────────────
 create_directories() {
   log "Creating directory structure at ${INSTALL_DIR}..."
-
   run "mkdir -p '${INSTALL_DIR}'"
   run "mkdir -p '${INSTALL_DIR}/storage/app/public'"
   run "mkdir -p '${INSTALL_DIR}/storage/logs'"
   run "mkdir -p '${INSTALL_DIR}/storage/oauth-keys'"
   run "mkdir -p '${INSTALL_DIR}/docker/loki'"
   run "mkdir -p '${INSTALL_DIR}/docker/grafana/provisioning'"
-  run "mkdir -p '${INSTALL_DIR}/docker/promtail'"
   run "mkdir -p '${INSTALL_DIR}/docker/frpc'"
-
-  # Permissions — storage writable by container user (uid 82 / www-data)
   if ! $DRY_RUN; then
     chmod -R 775 "${INSTALL_DIR}/storage" 2>/dev/null || true
   fi
-
   ok "Directories ready"
-}
-
-# ── Environment file ──────────────────────────────────────────────────────────
-create_env() {
-  local env_file="${INSTALL_DIR}/.env"
-  local example_url="https://raw.githubusercontent.com/track-any-device/.github/main/.env.example"
-
-  if [[ -f "$env_file" ]]; then
-    warn ".env already exists — skipping (edit manually to change settings)"
-    return
-  fi
-
-  log "Creating .env from template..."
-  if ! $DRY_RUN; then
-    if curl -fsSL "$example_url" -o "${env_file}.example" 2>/dev/null; then
-      cp "${env_file}.example" "$env_file"
-      ok ".env created at ${env_file}"
-      warn "IMPORTANT: Edit ${env_file} and fill in required values before starting."
-      warn "  Required: MYSQL_ROOT_PASSWORD, MYSQL_PASSWORD, APP keys, Pusher config,"
-      warn "            Cloudflare Tunnel token, Passport keys."
-      warn "  Pre-seeded (no config needed): Web SSO client, Mobile SSO client."
-      warn "  Run 'php artisan db:seed' after first start to create these clients."
-    else
-      warn "Could not download .env.example — creating minimal template."
-      generate_minimal_env "$env_file"
-    fi
-  else
-    echo "  [dry] Would create ${env_file}"
-  fi
-}
-
-generate_minimal_env() {
-  local file="$1"
-  cat > "$file" <<'ENV'
-# Track Any Device — Platform Environment
-# Fill in all required values before running install.sh --update or docker compose up
-
-# ── Required ──────────────────────────────────────────────────────────────────
-APP_DOMAIN=track-any-device.com
-LOGIN_DOMAIN=login.track-any-device.com
-ADMIN_DOMAIN=admin.track-any-device.com
-GRAPHQL_DOMAIN=graphql.track-any-device.com
-
-# Generate: openssl rand -base64 32
-LOGIN_APP_KEY=base64:REPLACE_ME
-ADMIN_APP_KEY=base64:REPLACE_ME
-API_APP_KEY=base64:REPLACE_ME
-GRAPHQL_APP_KEY=base64:REPLACE_ME
-
-# MySQL
-MYSQL_ROOT_PASSWORD=REPLACE_ME
-MYSQL_DATABASE=tad
-MYSQL_USER=tad
-MYSQL_PASSWORD=REPLACE_ME
-
-# Pusher / Soketi
-PUSHER_APP_ID=tad-app
-PUSHER_APP_KEY=REPLACE_ME
-PUSHER_APP_SECRET=REPLACE_ME
-
-# InfluxDB time-series telemetry
-INFLUXDB_USER=admin
-INFLUXDB_PASSWORD=REPLACE_ME
-INFLUXDB_ORG=track-any-device
-INFLUXDB_BUCKET=device_locations
-INFLUXDB_TOKEN=REPLACE_ME
-
-# Cloudflare Tunnel (Zero Trust → Networks → Tunnels → Create tunnel)
-CLOUDFLARE_TUNNEL_TOKEN=REPLACE_ME
-
-# Passport OAuth2 keys — generate once:
-#   docker run --rm php:8.5-alpine sh -c \
-#     "apk add -q openssl && openssl genrsa 4096 | base64 -w0 && echo && \
-#      openssl rsa -pubout 2>/dev/null | base64 -w0"
-PASSPORT_PRIVATE_KEY_B64=REPLACE_ME
-PASSPORT_PUBLIC_KEY_B64=REPLACE_ME
-
-# ── Pre-seeded OAuth clients (no configuration required) ─────────────────────
-# The following clients are seeded automatically by 'php artisan db:seed'.
-# They use static well-known credentials so web and mobile work out of the box.
-# For production: delete the rows from oauth_clients and override via env vars.
-#
-#   Web portal  — client_id: tad_web_portal    secret: tad_web_portal_secret
-#   Mobile app  — client_id: tad_mobile_tad101 secret: (none — PKCE public client)
-#   Admin panel — client_id: tad_admin_panel   secret: tad_admin_panel_secret
-#   GraphQL     — client_id: tad_graphql_api   secret: tad_graphql_api_secret
-#
-# To rotate production secrets, set these env vars then re-seed:
-# WEB_SSO_CLIENT_ID=your-custom-id
-# WEB_SSO_CLIENT_SECRET=your-rotated-secret
-
-# ── Optional ──────────────────────────────────────────────────────────────────
-# SMS Gateway
-SMS_GATEWAY_URL=
-SMS_GATEWAY_API_KEY=
-SMS_MASTER_NUMBER=
-
-# GraphQL M2M (for server-to-server calls, not the explorer)
-GRAPHQL_KEY=
-GRAPHQL_SECRET=
-
-# JT808 device type ID (from DeviceTypeSeeder)
-JT808_DEVICE_TYPE_ID=1
-
-# frp tunnel (profile: frp)
-FRP_SERVER_ADDR=
-FRP_TOKEN=change-me
-ENV
 }
 
 # ── Docker Compose generation ─────────────────────────────────────────────────
@@ -237,17 +380,13 @@ generate_compose() {
 
   cat > "$file" <<COMPOSE
 # Auto-generated by install.sh — do not edit manually.
-# Re-run 'bash install.sh --update' to regenerate with new versions.
+# Regenerate with: bash install.sh --update
 # Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 #
-# Versions:
-#   server-login:    ${TAD_SERVER_LOGIN_TAG}
-#   server-admin:    ${TAD_SERVER_ADMIN_TAG}
-#   server-api:      ${TAD_SERVER_API_TAG}
-#   server-graphql:  ${TAD_SERVER_GRAPHQL_TAG}
-#   server-tenant:   ${TAD_SERVER_TENANT_TAG}
-#   server-web:      ${TAD_SERVER_WEB_TAG}
-#   jt808-server:    ${TAD_JT808_TAG}
+# Versions:  login=${TAD_SERVER_LOGIN_TAG}  admin=${TAD_SERVER_ADMIN_TAG}
+#            api=${TAD_SERVER_API_TAG}  graphql=${TAD_SERVER_GRAPHQL_TAG}
+#            tenant=${TAD_SERVER_TENANT_TAG}  web=${TAD_SERVER_WEB_TAG}
+#            jt808=${TAD_JT808_TAG}
 
 x-app-base: &app-base
   networks: [tda]
@@ -267,11 +406,11 @@ x-app-env: &app-env
   ADMIN_DOMAIN:    \${ADMIN_DOMAIN}
   GRAPHQL_DOMAIN:  \${GRAPHQL_DOMAIN}
   DB_CONNECTION: mysql
-  DB_HOST: mysql
-  DB_PORT: 3306
-  DB_DATABASE:  \${MYSQL_DATABASE}
-  DB_USERNAME:  \${MYSQL_USER}
-  DB_PASSWORD:  \${MYSQL_PASSWORD}
+  DB_HOST:       mysql
+  DB_PORT:       3306
+  DB_DATABASE:   \${MYSQL_DATABASE}
+  DB_USERNAME:   \${MYSQL_USER}
+  DB_PASSWORD:   \${MYSQL_PASSWORD}
   CACHE_STORE:      redis
   QUEUE_CONNECTION: redis
   SESSION_DRIVER:   redis
@@ -281,14 +420,14 @@ x-app-env: &app-env
   PUSHER_APP_ID:     \${PUSHER_APP_ID}
   PUSHER_APP_KEY:    \${PUSHER_APP_KEY}
   PUSHER_APP_SECRET: \${PUSHER_APP_SECRET}
-  PUSHER_HOST:   soketi
-  PUSHER_PORT:   6001
-  PUSHER_SCHEME: http
+  PUSHER_HOST:       soketi
+  PUSHER_PORT:       6001
+  PUSHER_SCHEME:     http
   PUSHER_APP_CLUSTER: mt1
   MAIL_MAILER: smtp
   MAIL_HOST:   mailtrap
   MAIL_PORT:   1025
-  MAIL_FROM_ADDRESS: noreply@track-any-device.com
+  MAIL_FROM_ADDRESS: noreply@\${APP_DOMAIN}
   INFLUXDB_HOST:   influxdb
   INFLUXDB_PORT:   8086
   INFLUXDB_BUCKET: \${INFLUXDB_BUCKET:-device_locations}
@@ -351,13 +490,14 @@ services:
     networks: [tda]
     restart: unless-stopped
     environment:
-      NEXT_PUBLIC_APP_URL: https://\${APP_DOMAIN}
-      GRAPHQL_URL:  http://graphql/graphql
-      GRAPHQL_KEY:  \${GRAPHQL_KEY:-}
-      GRAPHQL_SECRET: \${GRAPHQL_SECRET:-}
-      API_URL: http://api
-      SSO_CLIENT_ID:     \${WEB_SSO_CLIENT_ID:-}
-      SSO_CLIENT_SECRET: \${WEB_SSO_CLIENT_SECRET:-}
+      NEXT_PUBLIC_APP_URL:  https://\${APP_DOMAIN}
+      GRAPHQL_URL:          http://graphql/graphql
+      GRAPHQL_KEY:          \${GRAPHQL_KEY:-}
+      GRAPHQL_SECRET:       \${GRAPHQL_SECRET:-}
+      API_URL:              http://api
+      # Static SSO client — matches OAuthClientSeeder defaults
+      SSO_CLIENT_ID:     \${WEB_SSO_CLIENT_ID:-${WEB_CLIENT_ID}}
+      SSO_CLIENT_SECRET: \${WEB_SSO_CLIENT_SECRET:-${WEB_CLIENT_SECRET}}
       SSO_REDIRECT_URI:  https://\${APP_DOMAIN}/sso/callback
       SSO_AUTH_URL:      https://\${LOGIN_DOMAIN}/oauth/authorize
       SSO_TOKEN_URL:     https://\${LOGIN_DOMAIN}/oauth/token
@@ -401,23 +541,23 @@ services:
       mysql: {condition: service_healthy}
       redis: {condition: service_started}
     environment:
-      JT808_TCP_ADDR: :7018
-      JT808_HTTP_ADDR: :9090
+      JT808_TCP_ADDR:    :7018
+      JT808_HTTP_ADDR:   :9090
       REDIS_HOST: redis
       REDIS_PORT: 6379
       STREAM_KEY: jt808:telemetry
       STREAM_MAX_LEN: "100000"
-      SESSION_PREFIX: "jt808:session:"
+      SESSION_PREFIX:    "jt808:session:"
       AUTH_TOKEN_PREFIX: "jt808:authtoken:"
       ONLINE_Z_KEY: jt808:online
-      CMD_CHANNEL: "jt808:cmd:"
-      AUTH_TIMEOUT: 30s
+      CMD_CHANNEL:  "jt808:cmd:"
+      AUTH_TIMEOUT:      30s
       HEARTBEAT_TIMEOUT: 3m
-      DB_HOST: mysql
-      DB_PORT: 3306
-      DB_DATABASE: \${MYSQL_DATABASE}
-      DB_USERNAME: \${MYSQL_USER}
-      DB_PASSWORD: \${MYSQL_PASSWORD}
+      DB_HOST:      mysql
+      DB_PORT:      3306
+      DB_DATABASE:  \${MYSQL_DATABASE}
+      DB_USERNAME:  \${MYSQL_USER}
+      DB_PASSWORD:  \${MYSQL_PASSWORD}
       DB_DEVICE_TYPE_ID: \${JT808_DEVICE_TYPE_ID:-1}
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:9090/healthz || exit 1"]
@@ -518,7 +658,7 @@ services:
       TUNNEL_TOKEN: \${CLOUDFLARE_TUNNEL_TOKEN}
     dns: [8.8.8.8, 1.1.1.1]
 
-  # ── Logging stack (docker compose --profile logging up -d) ──────────────────
+  # ── Logging (docker compose --profile logging up -d) ──────────────────────
   loki:
     image: grafana/loki:${LOKI_VERSION}
     container_name: loki
@@ -541,7 +681,7 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED:  "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
 
-  # ── frp tunnel (docker compose --profile frp up -d) ─────────────────────────
+  # ── frp tunnel (docker compose --profile frp up -d) ──────────────────────
   frpc:
     image: snowdreamtech/frpc:${FRPC_VERSION}
     container_name: frpc
@@ -552,9 +692,9 @@ services:
       jt808: {condition: service_healthy}
     environment:
       FRP_SERVER_ADDR: \${FRP_SERVER_ADDR:-}
-      FRP_TOKEN: \${FRP_TOKEN:-change-me}
+      FRP_TOKEN:       \${FRP_TOKEN:-change-me}
 
-  # ── GPS simulators (docker compose --profile sim up -d) ─────────────────────
+  # ── GPS simulators (docker compose --profile sim up -d) ───────────────────
   p901-0:
     image: ${ORG}/p901-device:${TAD_P901_TAG}
     container_name: p901-0
@@ -595,17 +735,17 @@ volumes:
   app_storage:
 COMPOSE
 
-  ok "docker-compose.yml generated at ${file}"
+  ok "docker-compose.yml generated"
 }
 
-# ── Docker stack operations ───────────────────────────────────────────────────
+# ── Stack operations ──────────────────────────────────────────────────────────
 stack_up() {
   local compose="${INSTALL_DIR}/docker-compose.yml"
-  log "Pulling images..."
+  log "Pulling images (this may take a few minutes)..."
   run "docker compose -f '${compose}' pull --quiet"
 
   if docker compose -f "${compose}" ps -q 2>/dev/null | grep -q .; then
-    log "Stack is running — updating changed services..."
+    log "Stack running — updating changed services..."
     run "docker compose -f '${compose}' up -d --remove-orphans"
     ok "Stack updated"
   else
@@ -617,102 +757,125 @@ stack_up() {
 
 wait_for_db() {
   local compose="${INSTALL_DIR}/docker-compose.yml"
+  local root_pass="${MYSQL_ROOT_PASSWORD:-}"
+
+  # Source .env if MYSQL_ROOT_PASSWORD not already set
+  if [[ -z "$root_pass" ]]; then
+    set -a; source "${INSTALL_DIR}/.env" 2>/dev/null || true; set +a
+    root_pass="${MYSQL_ROOT_PASSWORD:-}"
+  fi
+
   log "Waiting for MySQL to be ready..."
   local attempts=0
   while ! docker compose -f "${compose}" exec -T mysql \
-      mysqladmin ping -u root -p"${MYSQL_ROOT_PASSWORD:-}" --silent &>/dev/null; do
+      mysqladmin ping -u root -p"${root_pass}" --silent &>/dev/null 2>&1; do
     attempts=$((attempts + 1))
-    if [[ $attempts -ge 30 ]]; then
-      err "MySQL did not become ready within 5 minutes."
-      exit 1
-    fi
-    echo -n "."
+    [[ $attempts -ge 30 ]] && { err "MySQL did not become ready within 5 minutes."; exit 1; }
+    printf "." >/dev/tty
     sleep 10
   done
-  echo ""
+  echo "" >/dev/tty
   ok "MySQL ready"
 }
 
-run_migrations() {
+run_seed() {
   local compose="${INSTALL_DIR}/docker-compose.yml"
-  log "Running database migrations and seeders..."
-  run "docker compose -f '${compose}' exec -T cli php artisan migrate --force --seed"
-  ok "Database seeded"
+
+  log "Running migrations..."
+  run "docker compose -f '${compose}' exec -T cli php artisan migrate --force"
+  ok "Migrations complete"
+
+  log "Seeding database (device types, OAuth clients, admin user, sample data)..."
+  run "docker compose -f '${compose}' exec -T cli php artisan db:seed --force"
+  ok "Database seeded — OAuth clients created with static IDs"
 }
 
-# ── Status summary ────────────────────────────────────────────────────────────
+# ── Status display ────────────────────────────────────────────────────────────
 show_status() {
   local compose="${INSTALL_DIR}/docker-compose.yml"
+  # Source .env for domain display
+  set -a; source "${INSTALL_DIR}/.env" 2>/dev/null || true; set +a
+
   echo ""
-  echo -e "${BOLD}── Platform Status ─────────────────────────────────────────────${RESET}"
+  echo -e "${BOLD}── Services ────────────────────────────────────────────────────${RESET}"
   if ! $DRY_RUN; then
-    docker compose -f "${compose}" ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || true
+    docker compose -f "${compose}" ps --format \
+      "table {{.Name}}\t{{.Status}}" 2>/dev/null || true
   fi
   echo ""
-  echo -e "${BOLD}── Version Matrix ──────────────────────────────────────────────${RESET}"
-  echo "  server-login:   ${TAD_SERVER_LOGIN_TAG}"
-  echo "  server-admin:   ${TAD_SERVER_ADMIN_TAG}"
-  echo "  server-api:     ${TAD_SERVER_API_TAG}"
-  echo "  server-graphql: ${TAD_SERVER_GRAPHQL_TAG}"
-  echo "  server-tenant:  ${TAD_SERVER_TENANT_TAG}"
-  echo "  server-web:     ${TAD_SERVER_WEB_TAG}"
-  echo "  jt808-server:   ${TAD_JT808_TAG}"
+  echo -e "${BOLD}── Versions ────────────────────────────────────────────────────${RESET}"
+  echo "  server-login:    ${TAD_SERVER_LOGIN_TAG}"
+  echo "  server-admin:    ${TAD_SERVER_ADMIN_TAG}"
+  echo "  server-api:      ${TAD_SERVER_API_TAG}"
+  echo "  server-graphql:  ${TAD_SERVER_GRAPHQL_TAG}"
+  echo "  server-tenant:   ${TAD_SERVER_TENANT_TAG}"
+  echo "  server-web:      ${TAD_SERVER_WEB_TAG}"
+  echo "  jt808:           ${TAD_JT808_TAG}"
   echo ""
-  echo -e "${BOLD}── Access Points ───────────────────────────────────────────────${RESET}"
-  echo "  Admin panel:  https://\${ADMIN_DOMAIN:-admin.track-any-device.com}"
-  echo "  API:          https://api.\${APP_DOMAIN:-track-any-device.com}"
-  echo "  phpMyAdmin:   http://localhost:3333"
-  echo "  MailPit:      http://localhost:8025"
-  echo "  JT808 TCP:    :7018"
+  echo -e "${BOLD}── Access ──────────────────────────────────────────────────────${RESET}"
+  echo "  Web + My portal: https://${APP_DOMAIN:-track-any-device.com}"
+  echo "  Admin panel:     https://${ADMIN_DOMAIN:-admin.track-any-device.com}"
+  echo "  phpMyAdmin:      http://localhost:3333"
+  echo "  MailPit:         http://localhost:8025"
+  echo "  JT808 TCP:       :7018"
+  echo ""
+  echo -e "${BOLD}── OAuth clients (static, pre-seeded) ──────────────────────────${RESET}"
+  echo "  Web portal:   ${WEB_CLIENT_ID}"
+  echo "  Admin panel:  ${ADMIN_CLIENT_ID}"
+  echo "  GraphQL:      ${GRAPHQL_CLIENT_ID}"
+  echo "  Mobile PKCE:  ${MOBILE_CLIENT_ID}  (no secret)"
   echo ""
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 main() {
   echo ""
-  echo -e "${BOLD}╔══════════════════════════════════════════════════════════════╗"
-  echo -e "║   Track Any Device — Platform Installer                      ║"
-  echo -e "║   API version: ${TAD_SERVER_API_TAG}$(printf '%*s' $((38 - ${#TAD_SERVER_API_TAG})) '')║"
-  echo -e "╚══════════════════════════════════════════════════════════════╝${RESET}"
-  echo ""
+  echo -e "${BOLD}╔══════════════════════════════════════════════════════════════════╗"
+  echo -e "║   Track Any Device — Platform Installer                          ║"
+  echo -e "║   API: ${TAD_SERVER_API_TAG}$(printf '%*s' $((55 - ${#TAD_SERVER_API_TAG})) '')║"
+  echo -e "╚══════════════════════════════════════════════════════════════════╝${RESET}"
 
   check_prerequisites
 
   if $UPDATE_ONLY; then
-    log "Update mode — regenerating compose and pulling new images..."
-    generate_compose
-    stack_up
-    show_status
-    ok "Update complete."
-  else
-    log "Fresh install to: ${INSTALL_DIR}"
-    create_directories
-    create_env
-
-    # Abort if .env still has REPLACE_ME placeholders
-    if ! $DRY_RUN && grep -q "REPLACE_ME" "${INSTALL_DIR}/.env" 2>/dev/null; then
-      echo ""
-      warn "Your .env contains unfilled REPLACE_ME placeholders."
-      warn "Edit ${INSTALL_DIR}/.env, then re-run: bash install.sh --update"
-      exit 0
-    fi
-
-    generate_compose
-    stack_up
-
-    # Source .env to get MYSQL_ROOT_PASSWORD for wait_for_db
-    set -a; source "${INSTALL_DIR}/.env" 2>/dev/null || true; set +a
-
-    wait_for_db
-    run_migrations
-    show_status
-    ok "Installation complete."
+    # ── UPDATE: silent, no prompts, just version bump ───────────────────────
     echo ""
-    echo -e "  Next steps:"
-    echo -e "    1. Configure Cloudflare Tunnel public hostnames"
-    echo -e "    2. Log in to admin panel and approve your first tenant"
-    echo -e "    3. Add tenant containers: bash install.sh --add-tenant <slug>"
+    log "Update mode — regenerating compose with new versions..."
+    generate_compose
+    stack_up
+    show_status
+    ok "Update complete. All services running latest pinned versions."
+
+  else
+    # ── FRESH INSTALL: interactive ──────────────────────────────────────────
+    collect_config
+    create_directories
+    write_env
+    generate_compose
+    stack_up
+    wait_for_db
+    run_seed
+    show_status
+
+    echo -e "${BOLD}${GREEN}"
+    echo "  ✓ Installation complete!"
+    echo -e "${RESET}"
+    echo "  Next steps:"
+    echo "    1. Add Cloudflare Tunnel public hostnames (if not already done)"
+    echo "    2. Open admin panel → approve your first tenant"
+    echo "    3. Add tenant portals: edit docker-compose.yml, add a tenant_* block"
+    echo "    4. For GPS tracking: point JT808 devices to :7018"
+    echo ""
+    echo "  Config saved to: ${INSTALL_DIR}/.env"
+    echo "  Update later:    bash ${INSTALL_DIR}/install.sh --update"
+    echo ""
   fi
 }
+
+# Persist a copy of this script in INSTALL_DIR for easy updates
+if [[ "${BASH_SOURCE[0]}" != "${INSTALL_DIR}/install.sh" ]] && ! $DRY_RUN && ! $UPDATE_ONLY; then
+  mkdir -p "${INSTALL_DIR}" 2>/dev/null || true
+  cp "${BASH_SOURCE[0]}" "${INSTALL_DIR}/install.sh" 2>/dev/null || true
+fi
 
 main "$@"
