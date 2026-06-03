@@ -822,6 +822,21 @@ wait_for_db() {
   ok "MySQL ready"
 }
 
+wait_for_cli() {
+  local compose="${INSTALL_DIR}/docker-compose.yml"
+  log "Waiting for CLI container to be ready..."
+  local attempts=0
+  until docker compose -f "${compose}" \
+      exec -T -w /var/www/html cli php -r "echo 'ready';" &>/dev/null 2>&1; do
+    attempts=$((attempts + 1))
+    [[ $attempts -ge 30 ]] && { err "CLI container did not become ready within 5 minutes."; exit 1; }
+    printf "." >/dev/tty
+    sleep 10
+  done
+  echo "" >/dev/tty
+  ok "CLI ready"
+}
+
 run_seed() {
   local compose="${INSTALL_DIR}/docker-compose.yml"
 
@@ -899,6 +914,7 @@ main() {
     generate_compose
     stack_up
     wait_for_db
+    wait_for_cli
     run_seed
     show_status
 
