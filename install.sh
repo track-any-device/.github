@@ -521,6 +521,9 @@ services:
       APP_URL: https://\${ADMIN_DOMAIN}
       APP_KEY: \${ADMIN_APP_KEY}
       SESSION_COOKIE: admin_session
+      # SSO server URL must be explicit so Socialite sends OAuth flow to the
+      # login domain, not the current container's own domain.
+      SSO_SERVER_URL: https://\${LOGIN_DOMAIN}
 
   api:
     <<: *app-base
@@ -530,6 +533,7 @@ services:
       <<: *app-env
       APP_URL: https://api.\${APP_DOMAIN}
       APP_KEY: \${API_APP_KEY}
+      SSO_SERVER_URL: https://\${LOGIN_DOMAIN}
 
   graphql:
     <<: *app-base
@@ -540,6 +544,7 @@ services:
       APP_URL: https://\${GRAPHQL_DOMAIN}
       APP_KEY: \${GRAPHQL_APP_KEY}
       SESSION_COOKIE: graphql_session
+      SSO_SERVER_URL: https://\${LOGIN_DOMAIN}
       GRAPHQL_KEY:    \${GRAPHQL_KEY:-}
       GRAPHQL_SECRET: \${GRAPHQL_SECRET:-}
 
@@ -903,9 +908,14 @@ main() {
   fetch_versions
 
   if $UPDATE_ONLY; then
-    # ── UPDATE: pull latest versions, regenerate compose, restart ───────────
+    # ── UPDATE: pull latest versions, regenerate compose, restart, migrate ───
     generate_compose
     stack_up
+    # Apply any pending migrations from new releases automatically.
+    wait_for_app
+    log "Applying pending migrations..."
+    run "docker compose -f '${INSTALL_DIR}/docker-compose.yml' exec -T -w /var/www/html api php artisan migrate --force"
+    ok "Migrations up to date."
     show_status
     ok "Update complete."
 
