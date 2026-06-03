@@ -94,7 +94,7 @@ Track Any Device is a SaaS fleet tracking platform for organisations that need t
 
 | Repository | Image | Purpose |
 |---|---|---|
-| [app](https://github.com/track-any-device/app) | `server-api` · `server-queue` · `server-cron` · `server-cli` | API brain — REST API (mobile, my portal, tenant), queue workers, scheduler, CLI |
+| [app](https://github.com/track-any-device/app) | `server-api` · `server-queue` · `server-cron` · `server-cli` | Pure API server — REST (mobile, my portal, tenant portal), queue, scheduler, CLI. No Inertia pages. |
 | [server-tenant](https://github.com/track-any-device/server-tenant) | `server-tenant` | Tenant operational portal — live map, incidents, beats, workflows |
 | [server-login](https://github.com/track-any-device/server-login) | `server-login` | SSO identity provider — Fortify auth + OAuth2 authorization server |
 | [server-admin](https://github.com/track-any-device/server-admin) | `server-admin` | Central admin panel (Filament v4) |
