@@ -826,11 +826,11 @@ run_seed() {
   local compose="${INSTALL_DIR}/docker-compose.yml"
 
   log "Running migrations..."
-  run "docker compose -f '${compose}' exec -T cli php artisan migrate --force"
+  run "docker compose -f '${compose}' exec -T -w /var/www/html cli php artisan migrate --force"
   ok "Migrations complete"
 
   log "Seeding database (device types, OAuth clients, admin user, sample data)..."
-  run "docker compose -f '${compose}' exec -T cli php artisan db:seed --force"
+  run "docker compose -f '${compose}' exec -T -w /var/www/html cli php artisan db:seed --force"
   ok "Database seeded — OAuth clients created with static IDs"
 }
 
