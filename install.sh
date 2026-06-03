@@ -135,6 +135,8 @@ create_env() {
       warn "IMPORTANT: Edit ${env_file} and fill in required values before starting."
       warn "  Required: MYSQL_ROOT_PASSWORD, MYSQL_PASSWORD, APP keys, Pusher config,"
       warn "            Cloudflare Tunnel token, Passport keys."
+      warn "  Pre-seeded (no config needed): Web SSO client, Mobile SSO client."
+      warn "  Run 'php artisan db:seed' after first start to create these clients."
     else
       warn "Could not download .env.example — creating minimal template."
       generate_minimal_env "$env_file"
@@ -190,19 +192,29 @@ CLOUDFLARE_TUNNEL_TOKEN=REPLACE_ME
 PASSPORT_PRIVATE_KEY_B64=REPLACE_ME
 PASSPORT_PUBLIC_KEY_B64=REPLACE_ME
 
+# ── Pre-seeded OAuth clients (no configuration required) ─────────────────────
+# The following clients are seeded automatically by 'php artisan db:seed'.
+# They use static well-known credentials so web and mobile work out of the box.
+# For production: delete the rows from oauth_clients and override via env vars.
+#
+#   Web portal  — client_id: tad_web_portal    secret: tad_web_portal_secret
+#   Mobile app  — client_id: tad_mobile_tad101 secret: (none — PKCE public client)
+#   Admin panel — client_id: tad_admin_panel   secret: tad_admin_panel_secret
+#   GraphQL     — client_id: tad_graphql_api   secret: tad_graphql_api_secret
+#
+# To rotate production secrets, set these env vars then re-seed:
+# WEB_SSO_CLIENT_ID=your-custom-id
+# WEB_SSO_CLIENT_SECRET=your-rotated-secret
+
 # ── Optional ──────────────────────────────────────────────────────────────────
 # SMS Gateway
 SMS_GATEWAY_URL=
 SMS_GATEWAY_API_KEY=
 SMS_MASTER_NUMBER=
 
-# GraphQL M2M
+# GraphQL M2M (for server-to-server calls, not the explorer)
 GRAPHQL_KEY=
 GRAPHQL_SECRET=
-
-# SSO client for the web/my portal
-WEB_SSO_CLIENT_ID=
-WEB_SSO_CLIENT_SECRET=
 
 # JT808 device type ID (from DeviceTypeSeeder)
 JT808_DEVICE_TYPE_ID=1
