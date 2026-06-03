@@ -504,6 +504,7 @@ services:
     volumes: [app_storage:/app/storage/app]
     environment:
       <<: *app-env
+      APP_SURFACE: login
       APP_URL: https://\${LOGIN_DOMAIN}
       APP_KEY: \${LOGIN_APP_KEY}
       SESSION_COOKIE: login_session
@@ -518,11 +519,13 @@ services:
     volumes: [app_storage:/app/storage/app]
     environment:
       <<: *app-env
+      APP_SURFACE: admin
       APP_URL: https://\${ADMIN_DOMAIN}
       APP_KEY: \${ADMIN_APP_KEY}
       SESSION_COOKIE: admin_session
-      # SSO server URL must be explicit so Socialite sends OAuth flow to the
-      # login domain, not the current container's own domain.
+      # APP_SURFACE=admin tells SsoClientServiceProvider which oauth_clients
+      # row to load. SSO_SERVER_URL ensures Socialite redirects to the login
+      # domain rather than the container's own domain.
       SSO_SERVER_URL: https://\${LOGIN_DOMAIN}
 
   api:
@@ -531,6 +534,7 @@ services:
     container_name: api
     environment:
       <<: *app-env
+      APP_SURFACE: api
       APP_URL: https://api.\${APP_DOMAIN}
       APP_KEY: \${API_APP_KEY}
       SSO_SERVER_URL: https://\${LOGIN_DOMAIN}
@@ -541,6 +545,7 @@ services:
     container_name: graphql
     environment:
       <<: *app-env
+      APP_SURFACE: graphql
       APP_URL: https://\${GRAPHQL_DOMAIN}
       APP_KEY: \${GRAPHQL_APP_KEY}
       SESSION_COOKIE: graphql_session
@@ -558,6 +563,7 @@ services:
     container_name: cron
     environment:
       <<: *app-env
+      APP_SURFACE: api
       APP_KEY: \${API_APP_KEY}
 
   queue:
@@ -566,6 +572,7 @@ services:
     container_name: queue
     environment:
       <<: *app-env
+      APP_SURFACE: api
       APP_KEY: \${API_APP_KEY}
 
   cli:
