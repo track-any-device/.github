@@ -16,6 +16,12 @@
 #   --dry-run     Print what would happen without making changes
 # ──────────────────────────────────────────────────────────────────────────────
 
+# Capture script path BEFORE set -u activates.
+# BASH_SOURCE[0] is undefined when the script is piped via curl | bash
+# (stdin). Reading it after set -u causes "unbound variable". Capture it
+# now while the default is still permissive, then enable strict mode.
+SCRIPT_SELF="${BASH_SOURCE[0]:-}"
+
 set -euo pipefail
 
 # ── Offline fallback versions ─────────────────────────────────────────────────
@@ -926,22 +932,22 @@ main() {
   fi
 }
 
-# Persist a copy of this script in INSTALL_DIR for easy updates.
-# BASH_SOURCE[0] is unset when piped via curl | bash — handle both cases.
+# Persist a copy of this script in INSTALL_DIR so future --update works.
+# Uses $SCRIPT_SELF (captured before set -u) instead of BASH_SOURCE[0].
 _persist_script() {
   ! $DRY_RUN && ! $UPDATE_ONLY || return 0
   mkdir -p "${INSTALL_DIR}" 2>/dev/null || true
 
-  local src="${BASH_SOURCE[0]:-}"
-  if [[ -n "$src" && "$src" != "${INSTALL_DIR}/install.sh" ]]; then
-    # Running as a file — just copy it
-    cp "$src" "${INSTALL_DIR}/install.sh" 2>/dev/null && chmod +x "${INSTALL_DIR}/install.sh" || true
-  elif [[ -z "$src" ]]; then
-    # Running via curl | bash — download from GitHub so future --update works
+  if [[ -n "$SCRIPT_SELF" && "$SCRIPT_SELF" != "${INSTALL_DIR}/install.sh" ]]; then
+    # Running as a regular file — copy it
+    cp "$SCRIPT_SELF" "${INSTALL_DIR}/install.sh" 2>/dev/null \
+      && chmod +x "${INSTALL_DIR}/install.sh" || true
+  elif [[ -z "$SCRIPT_SELF" ]]; then
+    # Running via curl | bash — download a copy from GitHub
     curl -fsSL --max-time 15 \
       "https://raw.githubusercontent.com/track-any-device/.github/main/install.sh" \
-      -o "${INSTALL_DIR}/install.sh" 2>/dev/null && \
-      chmod +x "${INSTALL_DIR}/install.sh" || true
+      -o "${INSTALL_DIR}/install.sh" 2>/dev/null \
+      && chmod +x "${INSTALL_DIR}/install.sh" || true
   fi
 }
 
