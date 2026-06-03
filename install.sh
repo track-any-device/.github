@@ -499,7 +499,7 @@ services:
 
   login:
     <<: *app-base
-    image: ${ORG}/server-login:${TAD_SERVER_LOGIN_TAG}
+    image: ${ORG}/server-login:latest
     container_name: login
     volumes: [app_storage:/app/storage/app]
     environment:
@@ -513,7 +513,7 @@ services:
 
   admin:
     <<: *app-base
-    image: ${ORG}/server-admin:${TAD_SERVER_ADMIN_TAG}
+    image: ${ORG}/server-admin:latest
     container_name: admin
     volumes: [app_storage:/app/storage/app]
     environment:
@@ -524,7 +524,7 @@ services:
 
   api:
     <<: *app-base
-    image: ${ORG}/server-api:${TAD_SERVER_API_TAG}
+    image: ${ORG}/server-api:latest
     container_name: api
     environment:
       <<: *app-env
@@ -533,7 +533,7 @@ services:
 
   graphql:
     <<: *app-base
-    image: ${ORG}/server-graphql:${TAD_SERVER_GRAPHQL_TAG}
+    image: ${ORG}/server-graphql:latest
     container_name: graphql
     environment:
       <<: *app-env
@@ -549,7 +549,7 @@ services:
 
   cron:
     <<: *app-base
-    image: ${ORG}/server-cron:${TAD_SERVER_API_TAG}
+    image: ${ORG}/server-cron:latest
     container_name: cron
     environment:
       <<: *app-env
@@ -557,14 +557,14 @@ services:
 
   queue:
     <<: *app-base
-    image: ${ORG}/server-queue:${TAD_SERVER_API_TAG}
+    image: ${ORG}/server-queue:latest
     container_name: queue
     environment:
       <<: *app-env
       APP_KEY: \${API_APP_KEY}
 
   cli:
-    image: ${ORG}/server-cli:${TAD_SERVER_API_TAG}
+    image: ${ORG}/server-cli:latest
     container_name: cli
     networks: [tda]
     restart: unless-stopped
@@ -576,7 +576,7 @@ services:
       APP_KEY: \${API_APP_KEY}
 
   jt808:
-    image: ${ORG}/jt808-server:${TAD_JT808_TAG}
+    image: ${ORG}/jt808-server:latest
     container_name: jt808
     ports: ["7018:7018", "9090:9090"]
     networks: [tda]
@@ -740,7 +740,7 @@ services:
 
   # ── GPS simulators (docker compose --profile sim up -d) ───────────────────
   p901-0:
-    image: ${ORG}/p901-device:${TAD_P901_TAG}
+    image: ${ORG}/p901-device:latest
     container_name: p901-0
     networks: [tda]
     restart: unless-stopped
@@ -754,7 +754,7 @@ services:
       INITIAL_LON: "74.3587"
 
   p901-1:
-    image: ${ORG}/p901-device:${TAD_P901_TAG}
+    image: ${ORG}/p901-device:latest
     container_name: p901-1
     networks: [tda]
     restart: unless-stopped
