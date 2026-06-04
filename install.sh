@@ -681,7 +681,7 @@ services:
     ports: ["6379:6379"]
 
   soketi:
-    image: quay.io/soketi/soketi:${SOKETI_VERSION}
+    image: soketi/soketi:${SOKETI_VERSION}
     container_name: soketi
     networks: [tda]
     restart: unless-stopped
