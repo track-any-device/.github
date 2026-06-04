@@ -244,13 +244,13 @@ collect_config() {
 
   CFG_CF_TOKEN=$(ask "Cloudflare Tunnel token (blank to skip)")
 
-  # GPS Tracker TCP Server Host
-  # When a JT808 GPS tracker is first connected, the platform sends it an SMS
-  # command containing this host so the device knows where to connect via TCP.
-  # Defaults to APP_DOMAIN if blank — only override if TCP port 7018 is on a
-  # different IP (e.g. a frp VPS). Leave blank for most setups.
-  CFG_JT808_HOST=$(ask "GPS tracker server host for TCP connections (blank = use APP_DOMAIN)")
-  CFG_JT808_PORT=$(ask "GPS tracker TCP port" "7018")
+  # JT808 device configuration (written into the setup SMS sent to the device)
+  # When a GPS tracker is added, the platform sends it an SMS containing the
+  # JT808 host and port so the device firmware knows where to stream data.
+  # Leave host blank → defaults to APP_DOMAIN. Only override if JT808 is
+  # on a different IP (e.g. a frp VPS with a dedicated public IP).
+  CFG_JT808_HOST=$(ask "JT808 host to send in device setup SMS (blank = use APP_DOMAIN)")
+  CFG_JT808_PORT=$(ask "JT808 port to send in device setup SMS" "7018")
 
   CFG_SMS_URL=$(ask   "SMS Gateway URL (blank to skip)")
   CFG_SMS_KEY=""
@@ -401,16 +401,19 @@ SMS_GATEWAY_URL=${CFG_SMS_URL:-}
 SMS_GATEWAY_API_KEY=${CFG_SMS_KEY:-}
 SMS_MASTER_NUMBER=${CFG_SMS_NUMBER:-}
 
-# ── JT808 GPS protocol ────────────────────────────────────────────────────────
-# These two variables are sent TO GPS trackers via SMS during onboarding so
-# the device firmware knows which server to stream location data to via TCP.
-# They do NOT describe an SMS server — "SMS" refers to the delivery method.
+# ── JT808 device configuration (embedded in setup SMS) ───────────────────────
+# When a GPS tracker is approved or first connected, the platform sends an SMS
+# to the device's SIM card containing these values so the tracker firmware
+# knows where to open its JT808 TCP connection and stream location data.
 #
-# SMS_SERVER_HOST — public IP or hostname GPS trackers connect to on TCP.
-#                   Defaults to APP_DOMAIN when blank (config/sms.php fallback).
-#                   Override only when JT808 TCP (port 7018) is on a different
-#                   host (e.g. a frp reverse-proxy VPS).
-# SMS_SERVER_PORT — the TCP port JT808 trackers connect to (default 7018).
+# The SMS itself is delivered via HTTPS to the SMS gateway — these variables
+# are the CONTENT of that SMS, not the SMS transport configuration.
+#
+# SMS_SERVER_HOST — JT808 host written into the device setup SMS.
+#                   Defaults to APP_DOMAIN when blank (config/sms.php).
+#                   Override when JT808 TCP is on a different public IP
+#                   (e.g. a frp VPS). Leave blank for standard setups.
+# SMS_SERVER_PORT — JT808 TCP port written into the device setup SMS.
 SMS_SERVER_HOST=${CFG_JT808_HOST:-}
 SMS_SERVER_PORT=${CFG_JT808_PORT:-7018}
 
@@ -924,8 +927,9 @@ show_status() {
   local jt808_host="${SMS_SERVER_HOST:-${APP_DOMAIN:-<your-domain>}}"
   local jt808_port="${SMS_SERVER_PORT:-7018}"
   echo -e "${BOLD}── JT808 GPS Tracker Endpoint ──────────────────────────────────${RESET}"
-  echo "  GPS trackers connect to: ${jt808_host}:${jt808_port}  (raw TCP)"
-  echo "  (SMS_SERVER_HOST/PORT — sent to devices during SMS onboarding)"
+  echo "  Device setup SMS tells trackers to connect to:"
+  echo "    JT808 host: ${jt808_host}"
+  echo "    JT808 port: ${jt808_port}  (TCP — written into the SMS body)"
   echo "  Observability:           http://localhost:9090/metrics"
   echo ""
   echo -e "${BOLD}── OAuth clients (static, pre-seeded) ──────────────────────────${RESET}"
