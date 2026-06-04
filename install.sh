@@ -891,7 +891,7 @@ services:
       jt808: {condition: service_healthy}
     environment:
       DEVICE_IMEI: "00000000000000"
-      SERVER_ADDR: "jt808:7018"
+      SERVER_ADDR: "\${JT808_HOST:-jt808}:\${JT808_PORT:-7018}"
       INITIAL_LAT: "31.5204"
       INITIAL_LON: "74.3587"
 
@@ -905,7 +905,7 @@ services:
       jt808: {condition: service_healthy}
     environment:
       DEVICE_IMEI: "11111111111111"
-      SERVER_ADDR: "jt808:7018"
+      SERVER_ADDR: "\${JT808_HOST:-jt808}:\${JT808_PORT:-7018}"
       INITIAL_LAT: "31.5304"
       INITIAL_LON: "74.3687"
 
