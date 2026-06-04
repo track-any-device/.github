@@ -197,6 +197,15 @@ check_prerequisites() {
 
   ok "Docker $(docker --version | grep -oP '\d+\.\d+\.\d+' | head -1)"
   ok "Docker Compose $(docker compose version --short)"
+
+  # ── Ensure Docker can reach IPv6-only registries (e.g. quay.io) ─────────────
+  # On hosts without native IPv6, glibc may resolve quay.io to an IPv6 address
+  # that is unreachable, causing "network is unreachable" during docker pull.
+  # Force the kernel to prefer IPv4 for all outgoing connections.
+  if [[ -f /etc/gai.conf ]] && ! grep -q "^precedence ::ffff:0:0/96  100" /etc/gai.conf 2>/dev/null; then
+    echo "precedence ::ffff:0:0/96  100" >> /etc/gai.conf 2>/dev/null || true
+    ok "IPv4 preference set in /etc/gai.conf (fixes quay.io pull on IPv4-only hosts)"
+  fi
 }
 
 # ── Detect and load an existing .env ─────────────────────────────────────────
@@ -770,7 +779,7 @@ services:
     ports: ["6379:6379"]
 
   soketi:
-    image: soketi/soketi:${SOKETI_VERSION}
+    image: quay.io/soketi/soketi:${SOKETI_VERSION}
     container_name: soketi
     networks: [tda]
     restart: unless-stopped
