@@ -409,13 +409,13 @@ SMS_MASTER_NUMBER=${CFG_SMS_NUMBER:-}
 # The SMS itself is delivered via HTTPS to the SMS gateway — these variables
 # are the CONTENT of that SMS, not the SMS transport configuration.
 #
-# SMS_SERVER_HOST — JT808 host written into the device setup SMS.
-#                   Defaults to APP_DOMAIN when blank (config/sms.php).
-#                   Override when JT808 TCP is on a different public IP
-#                   (e.g. a frp VPS). Leave blank for standard setups.
-# SMS_SERVER_PORT — JT808 TCP port written into the device setup SMS.
-SMS_SERVER_HOST=${CFG_JT808_HOST:-}
-SMS_SERVER_PORT=${CFG_JT808_PORT:-7018}
+# JT808_HOST — JT808 host written into the device setup SMS.
+#              Defaults to APP_DOMAIN when blank (config/sms.php).
+#              Override when JT808 TCP is on a different public IP
+#              (e.g. a frp VPS). Leave blank for standard setups.
+# JT808_PORT — JT808 TCP port written into the device setup SMS.
+JT808_HOST=${CFG_JT808_HOST:-}
+JT808_PORT=${CFG_JT808_PORT:-7018}
 
 # Device type ID to auto-register when an unknown IMEI first connects.
 JT808_DEVICE_TYPE_ID=1
@@ -564,8 +564,8 @@ services:
       APP_KEY: \${API_APP_KEY}
       SSO_SERVER_URL: https://\${LOGIN_DOMAIN}
       # JT808 onboarding — sent to devices via SMS to configure their TCP endpoint
-      SMS_SERVER_HOST: \${SMS_SERVER_HOST:-}
-      SMS_SERVER_PORT: \${SMS_SERVER_PORT:-7018}
+      JT808_HOST: \${JT808_HOST:-}
+      JT808_PORT: \${JT808_PORT:-7018}
 
   graphql:
     <<: *app-base
@@ -593,8 +593,8 @@ services:
       <<: *app-env
       APP_SURFACE: api
       APP_KEY: \${API_APP_KEY}
-      SMS_SERVER_HOST: \${SMS_SERVER_HOST:-}
-      SMS_SERVER_PORT: \${SMS_SERVER_PORT:-7018}
+      JT808_HOST: \${JT808_HOST:-}
+      JT808_PORT: \${JT808_PORT:-7018}
 
   queue:
     <<: *app-base
@@ -604,8 +604,8 @@ services:
       <<: *app-env
       APP_SURFACE: api
       APP_KEY: \${API_APP_KEY}
-      SMS_SERVER_HOST: \${SMS_SERVER_HOST:-}
-      SMS_SERVER_PORT: \${SMS_SERVER_PORT:-7018}
+      JT808_HOST: \${JT808_HOST:-}
+      JT808_PORT: \${JT808_PORT:-7018}
 
   cli:
     image: ${ORG}/server-cli:latest
@@ -924,8 +924,8 @@ show_status() {
   echo "  phpMyAdmin:      http://localhost:3333"
   echo "  MailPit:         http://localhost:8025"
   echo ""
-  local jt808_host="${SMS_SERVER_HOST:-${APP_DOMAIN:-<your-domain>}}"
-  local jt808_port="${SMS_SERVER_PORT:-7018}"
+  local jt808_host="${JT808_HOST:-${APP_DOMAIN:-<your-domain>}}"
+  local jt808_port="${JT808_PORT:-7018}"
   echo -e "${BOLD}── JT808 GPS Tracker Endpoint ──────────────────────────────────${RESET}"
   echo "  Device setup SMS tells trackers to connect to:"
   echo "    JT808 host: ${jt808_host}"
