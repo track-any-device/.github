@@ -68,6 +68,7 @@ INSTALL_DIR="${TAD_DIR:-$HOME/tad}"
 ORG="trackanydevice"
 DRY_RUN=false
 UPDATE_ONLY=false
+HAVE_EXISTING_ENV=false   # set to true when an existing .env is found and loaded
 
 # ── Colours ───────────────────────────────────────────────────────────────────
 BOLD="\033[1m"; RESET="\033[0m"
@@ -198,8 +199,94 @@ check_prerequisites() {
   ok "Docker Compose $(docker compose version --short)"
 }
 
+# ── Detect and load an existing .env ─────────────────────────────────────────
+# If INSTALL_DIR already contains a .env, back the whole directory up to ~/tadx,
+# then source it into CFG_* variables so collect_config can skip all prompts and
+# write_env can produce an identical .env on the fresh install.
+detect_existing_env() {
+  local env_file="${INSTALL_DIR}/.env"
+  [[ -f "$env_file" ]] || return 0
+
+  local backup_dir="${HOME}/tadx"
+  warn "Existing install found at ${INSTALL_DIR}"
+  log "Backing up ${INSTALL_DIR} → ${backup_dir}..."
+  rm -rf "${backup_dir}" 2>/dev/null || true
+  cp -r "${INSTALL_DIR}" "${backup_dir}"
+  ok "Backup saved → ${backup_dir}"
+
+  log "Loading existing configuration..."
+  set -a; source "$env_file" 2>/dev/null || true; set +a
+
+  # Map every env var back to the CFG_* names collect_config would have set
+  CFG_DOMAIN="${APP_DOMAIN:-}"
+  CFG_SCHEME="https"
+  CFG_LOGIN_DOMAIN="${LOGIN_DOMAIN:-login.${CFG_DOMAIN}}"
+  CFG_ADMIN_DOMAIN="${ADMIN_DOMAIN:-admin.${CFG_DOMAIN}}"
+  CFG_GRAPHQL_DOMAIN="${GRAPHQL_DOMAIN:-graphql.${CFG_DOMAIN}}"
+  CFG_MYSQL_DB="${MYSQL_DATABASE:-tad}"
+  CFG_MYSQL_USER="${MYSQL_USER:-tad}"
+  CFG_MYSQL_ROOT_PASS="${MYSQL_ROOT_PASSWORD:-}"
+  CFG_MYSQL_PASS="${MYSQL_PASSWORD:-}"
+  CFG_CF_TOKEN="${CLOUDFLARE_TUNNEL_TOKEN:-}"
+  CFG_JT808_HOST="${JT808_HOST:-}"
+  CFG_JT808_PORT="${JT808_PORT:-7018}"
+  CFG_SMS_URL="${SMS_GATEWAY_URL:-}"
+  CFG_SMS_KEY="${SMS_GATEWAY_API_KEY:-}"
+  CFG_SMS_NUMBER="${SMS_MASTER_NUMBER:-}"
+  CFG_LOGIN_KEY="${LOGIN_APP_KEY:-}"
+  CFG_ADMIN_KEY="${ADMIN_APP_KEY:-}"
+  CFG_API_KEY="${API_APP_KEY:-}"
+  CFG_GRAPHQL_KEY="${GRAPHQL_APP_KEY:-}"
+  CFG_PUSHER_ID="${PUSHER_APP_ID:-}"
+  CFG_PUSHER_KEY="${PUSHER_APP_KEY:-}"
+  CFG_PUSHER_SECRET="${PUSHER_APP_SECRET:-}"
+  CFG_INFLUX_PASS="${INFLUXDB_PASSWORD:-}"
+  CFG_INFLUX_TOKEN="${INFLUXDB_TOKEN:-}"
+  CFG_PASSPORT_PRIVATE="${PASSPORT_PRIVATE_KEY_B64:-}"
+  CFG_PASSPORT_PUBLIC="${PASSPORT_PUBLIC_KEY_B64:-}"
+
+  HAVE_EXISTING_ENV=true
+  ok "Existing configuration loaded — all secrets and settings will be reused"
+}
+
 # ── Interactive configuration gathering ───────────────────────────────────────
 collect_config() {
+  # ── Reuse existing config (no prompts) ──────────────────────────────────────
+  if $HAVE_EXISTING_ENV; then
+    echo ""
+    echo -e "${BOLD}── Reusing existing configuration ──────────────────────────────${RESET}"
+    echo ""
+    echo "  Domain:    ${CFG_DOMAIN}"
+    echo "  Database:  ${CFG_MYSQL_USER}@mysql/${CFG_MYSQL_DB}"
+    echo "  CF Tunnel: ${CFG_CF_TOKEN:-(not configured)}"
+    echo "  SMS URL:   ${CFG_SMS_URL:-(not configured)}"
+    echo "  JT808:     ${CFG_JT808_HOST:-${CFG_DOMAIN}}:${CFG_JT808_PORT}"
+    echo ""
+    dim "  All secrets (app keys, DB passwords, Passport RSA keys) preserved."
+    echo ""
+    # Generate only secrets that are missing from the old .env
+    [[ -z "${CFG_LOGIN_KEY:-}"       ]] && CFG_LOGIN_KEY=$(gen_app_key)   && ok "Login app key (generated)"
+    [[ -z "${CFG_ADMIN_KEY:-}"       ]] && CFG_ADMIN_KEY=$(gen_app_key)   && ok "Admin app key (generated)"
+    [[ -z "${CFG_API_KEY:-}"         ]] && CFG_API_KEY=$(gen_app_key)     && ok "API app key (generated)"
+    [[ -z "${CFG_GRAPHQL_KEY:-}"     ]] && CFG_GRAPHQL_KEY=$(gen_app_key) && ok "GraphQL app key (generated)"
+    [[ -z "${CFG_PUSHER_ID:-}"       ]] && CFG_PUSHER_ID=$(gen_pusher_id)
+    [[ -z "${CFG_PUSHER_KEY:-}"      ]] && CFG_PUSHER_KEY=$(gen_hex)
+    [[ -z "${CFG_PUSHER_SECRET:-}"   ]] && CFG_PUSHER_SECRET=$(gen_hex)
+    [[ -z "${CFG_INFLUX_PASS:-}"     ]] && CFG_INFLUX_PASS=$(gen_password)
+    [[ -z "${CFG_INFLUX_TOKEN:-}"    ]] && CFG_INFLUX_TOKEN=$(gen_hex)
+    if [[ -z "${CFG_PASSPORT_PRIVATE:-}" ]]; then
+      echo -ne "  Generating Passport RSA keys (4096-bit)..." >/dev/tty
+      local priv_pem
+      priv_pem=$(openssl genrsa 4096 2>/dev/null)
+      CFG_PASSPORT_PRIVATE=$(echo "$priv_pem" | openssl base64 -A)
+      CFG_PASSPORT_PUBLIC=$(echo "$priv_pem" | openssl rsa -pubout 2>/dev/null | openssl base64 -A)
+      echo " done" >/dev/tty
+      ok "Passport RSA key pair (generated)"
+    fi
+    return 0
+  fi
+
+  # ── Fresh interactive prompts ────────────────────────────────────────────────
   echo ""
   echo -e "${BOLD}── Step 1/4 — Domain ───────────────────────────────────────────${RESET}"
   echo ""
@@ -318,7 +405,9 @@ collect_config() {
 write_env() {
   local env_file="${INSTALL_DIR}/.env"
 
-  if [[ -f "$env_file" ]]; then
+  # If .env already exists AND we haven't loaded it (shouldn't happen in normal
+  # flow, but guard against accidental overwrites just in case).
+  if [[ -f "$env_file" ]] && ! $HAVE_EXISTING_ENV; then
     warn ".env already exists — skipping. Delete it to reconfigure, or edit directly."
     # Source it so wait_for_db can read MYSQL_ROOT_PASSWORD
     set -a; source "$env_file" 2>/dev/null || true; set +a
@@ -955,6 +1044,8 @@ main() {
 
   if $UPDATE_ONLY; then
     # ── UPDATE: pull latest versions, regenerate compose, restart, migrate ───
+    # Source .env so compose generation has access to all variables
+    set -a; source "${INSTALL_DIR}/.env" 2>/dev/null || true; set +a
     generate_compose
     stack_up
     # Apply any pending migrations from new releases automatically.
@@ -966,7 +1057,8 @@ main() {
     ok "Update complete."
 
   else
-    # ── FRESH INSTALL: interactive prompts → auto-generated .env ────────────
+    # ── FRESH INSTALL: load existing .env if present, then prompt (or skip) ─
+    detect_existing_env
     collect_config
     create_directories
     write_env
