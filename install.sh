@@ -763,6 +763,7 @@ services:
       APP_URL: https://api.\${APP_DOMAIN}
       APP_KEY: \${API_APP_KEY}
       SSO_SERVER_URL: https://\${LOGIN_DOMAIN}
+      LOG_CHANNEL: stderr
       # JT808 onboarding — sent to devices via SMS to configure their TCP endpoint
       JT808_HOST: \${JT808_HOST:-}
       JT808_PORT: \${JT808_PORT:-7018}
@@ -793,6 +794,7 @@ services:
       <<: *app-env
       APP_SURFACE: api
       APP_KEY: \${API_APP_KEY}
+      LOG_CHANNEL: stderr
       JT808_HOST: \${JT808_HOST:-}
       JT808_PORT: \${JT808_PORT:-7018}
 
@@ -804,6 +806,7 @@ services:
       <<: *app-env
       APP_SURFACE: api
       APP_KEY: \${API_APP_KEY}
+      LOG_CHANNEL: stderr
       JT808_HOST: \${JT808_HOST:-}
       JT808_PORT: \${JT808_PORT:-7018}
 
