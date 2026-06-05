@@ -665,11 +665,24 @@ mkdir -p \
     storage/framework/sessions \
     storage/framework/views \
     storage/logs \
+    storage/oauth-keys \
     bootstrap/cache \
     /var/log/supervisor
 
 chown -R www-data:www-data storage bootstrap/cache
 chmod -R 775 storage bootstrap/cache
+
+# Decode Passport RSA keys from base64 env vars into files that Passport reads.
+if [ -n "$PASSPORT_PRIVATE_KEY_B64" ]; then
+    printf '%s' "$PASSPORT_PRIVATE_KEY_B64" | base64 -d > storage/oauth-keys/oauth-private.key
+    chown www-data:www-data storage/oauth-keys/oauth-private.key
+    chmod 600 storage/oauth-keys/oauth-private.key
+fi
+if [ -n "$PASSPORT_PUBLIC_KEY_B64" ]; then
+    printf '%s' "$PASSPORT_PUBLIC_KEY_B64" | base64 -d > storage/oauth-keys/oauth-public.key
+    chown www-data:www-data storage/oauth-keys/oauth-public.key
+    chmod 644 storage/oauth-keys/oauth-public.key
+fi
 
 touch storage/logs/laravel.log
 chown www-data:www-data storage/logs/laravel.log
