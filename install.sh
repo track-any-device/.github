@@ -649,71 +649,6 @@ scrape_configs:
         target_label: stream
 PROMTAIL
 
-  # Mount-override for start.sh — fixes route/view cache partial-write bug
-  # without requiring a new Docker image build.
-  mkdir -p "${INSTALL_DIR}/docker/app"
-  cat > "${INSTALL_DIR}/docker/app/start.sh" <<'STARTSH'
-#!/bin/sh
-set -e
-
-echo "Starting app container..."
-cd /var/www/html
-
-mkdir -p \
-    storage/app \
-    storage/framework/cache \
-    storage/framework/sessions \
-    storage/framework/views \
-    storage/logs \
-    storage/oauth-keys \
-    bootstrap/cache \
-    /var/log/supervisor
-
-chown -R www-data:www-data storage bootstrap/cache
-chmod -R 775 storage bootstrap/cache
-
-# Decode Passport RSA keys from base64 env vars into files that Passport reads.
-if [ -n "$PASSPORT_PRIVATE_KEY_B64" ]; then
-    printf '%s' "$PASSPORT_PRIVATE_KEY_B64" | base64 -d > storage/oauth-keys/oauth-private.key
-    chown www-data:www-data storage/oauth-keys/oauth-private.key
-    chmod 600 storage/oauth-keys/oauth-private.key
-fi
-if [ -n "$PASSPORT_PUBLIC_KEY_B64" ]; then
-    printf '%s' "$PASSPORT_PUBLIC_KEY_B64" | base64 -d > storage/oauth-keys/oauth-public.key
-    chown www-data:www-data storage/oauth-keys/oauth-public.key
-    chmod 644 storage/oauth-keys/oauth-public.key
-fi
-
-touch storage/logs/laravel.log
-chown www-data:www-data storage/logs/laravel.log
-chmod 664 storage/logs/laravel.log
-
-rm -f bootstrap/cache/packages.php bootstrap/cache/services.php
-
-(
-    flock -x 200
-    composer install --no-dev --optimize-autoloader --no-interaction --no-scripts 2>/dev/null || true
-) 200>/var/www/html/.composer-install.lock
-php artisan optimize:clear 2>/dev/null || true
-
-pnpm install --frozen-lockfile 2>/dev/null || true
-pnpm run build 2>/dev/null || true
-
-php artisan package:discover --ansi 2>/dev/null || true
-php artisan storage:link 2>/dev/null || true
-php artisan config:cache 2>/dev/null || true
-# If route:cache fails (e.g. duplicate route names across surfaces), clear the
-# partial cache so dynamic routing is used instead of a broken cache file.
-php artisan route:cache 2>/dev/null || php artisan route:clear 2>/dev/null || true
-# If view:cache fails (e.g. Filament components not present in api surface),
-# clear any partial compilations so views compile on demand.
-php artisan view:cache 2>/dev/null || php artisan view:clear 2>/dev/null || true
-
-echo "Starting supervisor..."
-exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
-STARTSH
-  chmod +x "${INSTALL_DIR}/docker/app/start.sh"
-
   ok "Docker config files written"
 }
 
@@ -784,11 +719,6 @@ x-app-env: &app-env
   INFLUXDB_TOKEN:  \${INFLUXDB_TOKEN}
   PASSPORT_PRIVATE_KEY_B64: \${PASSPORT_PRIVATE_KEY_B64}
   PASSPORT_PUBLIC_KEY_B64:  \${PASSPORT_PUBLIC_KEY_B64}
-  # File paths written by start.sh from the B64 vars above.
-  # Explicit paths ensure old images (which read PASSPORT_PRIVATE_KEY via env())
-  # and new images (which default to storage_path) both use the same key files.
-  PASSPORT_PRIVATE_KEY: "file:///var/www/html/storage/oauth-keys/oauth-private.key"
-  PASSPORT_PUBLIC_KEY:  "file:///var/www/html/storage/oauth-keys/oauth-public.key"
 
 services:
 
@@ -796,9 +726,7 @@ services:
     <<: *app-base
     image: ${ORG}/server-login:latest
     container_name: login
-    volumes:
-      - app_storage:/app/storage/app
-      - ./docker/app/start.sh:/start.sh:ro
+    volumes: [app_storage:/app/storage/app]
     environment:
       <<: *app-env
       APP_SURFACE: login
@@ -813,26 +741,19 @@ services:
     <<: *app-base
     image: ${ORG}/server-admin:latest
     container_name: admin
-    volumes:
-      - app_storage:/app/storage/app
-      - ./docker/app/start.sh:/start.sh:ro
+    volumes: [app_storage:/app/storage/app]
     environment:
       <<: *app-env
       APP_SURFACE: admin
       APP_URL: https://\${ADMIN_DOMAIN}
       APP_KEY: \${ADMIN_APP_KEY}
       SESSION_COOKIE: admin_session
-      # APP_SURFACE=admin tells SsoClientServiceProvider which oauth_clients
-      # row to load. SSO_SERVER_URL ensures Socialite redirects to the login
-      # domain rather than the container's own domain.
       SSO_SERVER_URL: https://\${LOGIN_DOMAIN}
 
   api:
     <<: *app-base
     image: ${ORG}/server-api:latest
     container_name: api
-    volumes:
-      - ./docker/app/start.sh:/start.sh:ro
     environment:
       <<: *app-env
       APP_SURFACE: api
@@ -849,8 +770,6 @@ services:
     <<: *app-base
     image: ${ORG}/server-graphql:latest
     container_name: graphql
-    volumes:
-      - ./docker/app/start.sh:/start.sh:ro
     environment:
       <<: *app-env
       APP_SURFACE: graphql
