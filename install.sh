@@ -784,6 +784,11 @@ x-app-env: &app-env
   INFLUXDB_TOKEN:  \${INFLUXDB_TOKEN}
   PASSPORT_PRIVATE_KEY_B64: \${PASSPORT_PRIVATE_KEY_B64}
   PASSPORT_PUBLIC_KEY_B64:  \${PASSPORT_PUBLIC_KEY_B64}
+  # File paths written by start.sh from the B64 vars above.
+  # Explicit paths ensure old images (which read PASSPORT_PRIVATE_KEY via env())
+  # and new images (which default to storage_path) both use the same key files.
+  PASSPORT_PRIVATE_KEY: "file:///var/www/html/storage/oauth-keys/oauth-private.key"
+  PASSPORT_PUBLIC_KEY:  "file:///var/www/html/storage/oauth-keys/oauth-public.key"
 
 services:
 
