@@ -791,7 +791,9 @@ services:
     <<: *app-base
     image: ${ORG}/server-login:latest
     container_name: login
-    volumes: [app_storage:/app/storage/app]
+    volumes:
+      - app_storage:/app/storage/app
+      - ./docker/app/start.sh:/start.sh:ro
     environment:
       <<: *app-env
       APP_SURFACE: login
@@ -806,7 +808,9 @@ services:
     <<: *app-base
     image: ${ORG}/server-admin:latest
     container_name: admin
-    volumes: [app_storage:/app/storage/app]
+    volumes:
+      - app_storage:/app/storage/app
+      - ./docker/app/start.sh:/start.sh:ro
     environment:
       <<: *app-env
       APP_SURFACE: admin
@@ -840,6 +844,8 @@ services:
     <<: *app-base
     image: ${ORG}/server-graphql:latest
     container_name: graphql
+    volumes:
+      - ./docker/app/start.sh:/start.sh:ro
     environment:
       <<: *app-env
       APP_SURFACE: graphql
