@@ -542,12 +542,113 @@ create_directories() {
   run "mkdir -p '${INSTALL_DIR}/storage/logs'"
   run "mkdir -p '${INSTALL_DIR}/storage/oauth-keys'"
   run "mkdir -p '${INSTALL_DIR}/docker/loki'"
-  run "mkdir -p '${INSTALL_DIR}/docker/grafana/provisioning'"
+  run "mkdir -p '${INSTALL_DIR}/docker/grafana/provisioning/datasources'"
+  run "mkdir -p '${INSTALL_DIR}/docker/promtail'"
   run "mkdir -p '${INSTALL_DIR}/docker/frpc'"
   if ! $DRY_RUN; then
     chmod -R 775 "${INSTALL_DIR}/storage" 2>/dev/null || true
   fi
   ok "Directories ready"
+}
+
+# ── Docker config files (Loki, Promtail, Grafana) ────────────────────────────
+write_docker_configs() {
+  if $DRY_RUN; then
+    echo "  [dry] Would write docker config files"
+    return
+  fi
+
+  log "Writing docker config files..."
+
+  cat > "${INSTALL_DIR}/docker/loki/loki-config.yml" <<'LOKI'
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+
+common:
+  ring:
+    kvstore:
+      store: inmemory
+    instance_addr: 127.0.0.1
+  replication_factor: 1
+  path_prefix: /loki
+
+schema_config:
+  configs:
+    - from: "2024-01-01"
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+storage_config:
+  filesystem:
+    directory: /loki/chunks
+
+limits_config:
+  retention_period: 168h
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
+LOKI
+
+  mkdir -p "${INSTALL_DIR}/docker/grafana/provisioning/datasources"
+  cat > "${INSTALL_DIR}/docker/grafana/provisioning/datasources/loki.yml" <<'GRAFANA'
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    isDefault: true
+    editable: false
+GRAFANA
+
+  cat > "${INSTALL_DIR}/docker/promtail/promtail-config.yml" <<'PROMTAIL'
+server:
+  http_listen_port: 9080
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          - name: name
+            values:
+              - login
+              - admin
+              - api
+              - graphql
+              - cli
+              - cron
+              - queue
+              - jt808
+              - p901-0
+              - p901-1
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/?(.*)'
+        target_label: container
+      - source_labels: ['__meta_docker_container_log_stream']
+        target_label: stream
+PROMTAIL
+
+  ok "Docker config files written"
 }
 
 # ── Docker Compose generation ─────────────────────────────────────────────────
@@ -851,9 +952,24 @@ services:
     networks: [tda]
     restart: unless-stopped
     command: -config.file=/etc/loki/loki-config.yml
-    volumes: [loki_data:/loki]
+    volumes:
+      - loki_data:/loki
+      - ./docker/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
     ports: ["3100:3100"]
     profiles: [logging]
+
+  promtail:
+    image: grafana/promtail:${LOKI_VERSION}
+    container_name: promtail
+    networks: [tda]
+    restart: unless-stopped
+    profiles: [logging]
+    depends_on:
+      loki: {condition: service_started}
+    command: -config.file=/etc/promtail/promtail-config.yml
+    volumes:
+      - ./docker/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
 
   grafana:
     image: grafana/grafana:${GRAFANA_VERSION}
@@ -861,7 +977,9 @@ services:
     networks: [tda]
     restart: unless-stopped
     ports: ["3000:3000"]
-    volumes: [grafana_data:/var/lib/grafana]
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
     profiles: [logging]
     environment:
       GF_AUTH_ANONYMOUS_ENABLED:  "true"
@@ -1055,6 +1173,7 @@ main() {
     # ── UPDATE: pull latest versions, regenerate compose, restart, migrate ───
     # Source .env so compose generation has access to all variables
     set -a; source "${INSTALL_DIR}/.env" 2>/dev/null || true; set +a
+    write_docker_configs
     generate_compose
     stack_up
     # Apply any pending migrations from new releases automatically.
@@ -1071,6 +1190,7 @@ main() {
     collect_config
     create_directories
     write_env
+    write_docker_configs
     generate_compose
     stack_up
     wait_for_db
