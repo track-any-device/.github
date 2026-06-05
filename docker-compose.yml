@@ -448,7 +448,7 @@ services:
   p901-0:
     image: trackanydevice/p901-device:0.1.1
     container_name: p901-0
-    environment: {DEVICE_IMEI: "86000000000000", SERVER_ADDR: "jt808:7018", LOCATION_INTERVAL: "2s", INITIAL_LAT: "31.5204", INITIAL_LON: "74.3587", INITIAL_HEADING: "45",  INITIAL_SPEED: "40"}
+    environment: {DEVICE_IMEI: "86000000000000", SERVER_ADDR: "${JT808_HOST:-jt808}:${JT808_PORT:-7018}", LOCATION_INTERVAL: "2s", INITIAL_LAT: "31.5204", INITIAL_LON: "74.3587", INITIAL_HEADING: "45",  INITIAL_SPEED: "40"}
     depends_on: {jt808: {condition: service_healthy}}
     networks: [tda]
     profiles: [sim]
@@ -457,7 +457,7 @@ services:
   p901-1:
     image: trackanydevice/p901-device:0.1.1
     container_name: p901-1
-    environment: {DEVICE_IMEI: "86000000000001", SERVER_ADDR: "jt808:7018", LOCATION_INTERVAL: "2s", INITIAL_LAT: "31.4697", INITIAL_LON: "74.4074", INITIAL_HEADING: "135", INITIAL_SPEED: "55"}
+    environment: {DEVICE_IMEI: "86000000000001", SERVER_ADDR: "${JT808_HOST:-jt808}:${JT808_PORT:-7018}", LOCATION_INTERVAL: "2s", INITIAL_LAT: "31.4697", INITIAL_LON: "74.4074", INITIAL_HEADING: "135", INITIAL_SPEED: "55"}
     depends_on: {jt808: {condition: service_healthy}}
     networks: [tda]
     profiles: [sim]
@@ -466,7 +466,7 @@ services:
   p901-2:
     image: trackanydevice/p901-device:0.1.1
     container_name: p901-2
-    environment: {DEVICE_IMEI: "86000000000002", SERVER_ADDR: "jt808:7018", LOCATION_INTERVAL: "2s", INITIAL_LAT: "31.5497", INITIAL_LON: "74.3436", INITIAL_HEADING: "270", INITIAL_SPEED: "30"}
+    environment: {DEVICE_IMEI: "86000000000002", SERVER_ADDR: "${JT808_HOST:-jt808}:${JT808_PORT:-7018}", LOCATION_INTERVAL: "2s", INITIAL_LAT: "31.5497", INITIAL_LON: "74.3436", INITIAL_HEADING: "270", INITIAL_SPEED: "30"}
     depends_on: {jt808: {condition: service_healthy}}
     networks: [tda]
     profiles: [sim]
@@ -475,7 +475,7 @@ services:
   p901-3:
     image: trackanydevice/p901-device:0.1.1
     container_name: p901-3
-    environment: {DEVICE_IMEI: "86000000000003", SERVER_ADDR: "jt808:7018", LOCATION_INTERVAL: "2s", INITIAL_LAT: "31.4553", INITIAL_LON: "74.3198", INITIAL_HEADING: "180", INITIAL_SPEED: "65"}
+    environment: {DEVICE_IMEI: "86000000000003", SERVER_ADDR: "${JT808_HOST:-jt808}:${JT808_PORT:-7018}", LOCATION_INTERVAL: "2s", INITIAL_LAT: "31.4553", INITIAL_LON: "74.3198", INITIAL_HEADING: "180", INITIAL_SPEED: "65"}
     depends_on: {jt808: {condition: service_healthy}}
     networks: [tda]
     profiles: [sim]
@@ -484,7 +484,7 @@ services:
   p901-4:
     image: trackanydevice/p901-device:0.1.1
     container_name: p901-4
-    environment: {DEVICE_IMEI: "86000000000004", SERVER_ADDR: "jt808:7018", LOCATION_INTERVAL: "2s", INITIAL_LAT: "31.5820", INITIAL_LON: "74.3294", INITIAL_HEADING: "315", INITIAL_SPEED: "80"}
+    environment: {DEVICE_IMEI: "86000000000004", SERVER_ADDR: "${JT808_HOST:-jt808}:${JT808_PORT:-7018}", LOCATION_INTERVAL: "2s", INITIAL_LAT: "31.5820", INITIAL_LON: "74.3294", INITIAL_HEADING: "315", INITIAL_SPEED: "80"}
     depends_on: {jt808: {condition: service_healthy}}
     networks: [tda]
     profiles: [sim]
@@ -493,7 +493,7 @@ services:
   p901-5:
     image: trackanydevice/p901-device:0.1.1
     container_name: p901-5
-    environment: {DEVICE_IMEI: "86000000000005", SERVER_ADDR: "jt808:7018", LOCATION_INTERVAL: "2s", INITIAL_LAT: "31.7131", INITIAL_LON: "73.9756", INITIAL_HEADING: "90",  INITIAL_SPEED: "70"}
+    environment: {DEVICE_IMEI: "86000000000005", SERVER_ADDR: "${JT808_HOST:-jt808}:${JT808_PORT:-7018}", LOCATION_INTERVAL: "2s", INITIAL_LAT: "31.7131", INITIAL_LON: "73.9756", INITIAL_HEADING: "90",  INITIAL_SPEED: "70"}
     depends_on: {jt808: {condition: service_healthy}}
     networks: [tda]
     profiles: [sim]
@@ -502,7 +502,7 @@ services:
   p901-6:
     image: trackanydevice/p901-device:0.1.1
     container_name: p901-6
-    environment: {DEVICE_IMEI: "86000000000006", SERVER_ADDR: "jt808:7018", LOCATION_INTERVAL: "2s", INITIAL_LAT: "32.1877", INITIAL_LON: "74.1945", INITIAL_HEADING: "200", INITIAL_SPEED: "50"}
+    environment: {DEVICE_IMEI: "86000000000006", SERVER_ADDR: "${JT808_HOST:-jt808}:${JT808_PORT:-7018}", LOCATION_INTERVAL: "2s", INITIAL_LAT: "32.1877", INITIAL_LON: "74.1945", INITIAL_HEADING: "200", INITIAL_SPEED: "50"}
     depends_on: {jt808: {condition: service_healthy}}
     networks: [tda]
     profiles: [sim]
@@ -511,7 +511,7 @@ services:
   p901-7:
     image: trackanydevice/p901-device:0.1.1
     container_name: p901-7
-    environment: {DEVICE_IMEI: "86000000000007", SERVER_ADDR: "jt808:7018", LOCATION_INTERVAL: "2s", INITIAL_LAT: "32.4945", INITIAL_LON: "74.5229", INITIAL_HEADING: "240", INITIAL_SPEED: "60"}
+    environment: {DEVICE_IMEI: "86000000000007", SERVER_ADDR: "${JT808_HOST:-jt808}:${JT808_PORT:-7018}", LOCATION_INTERVAL: "2s", INITIAL_LAT: "32.4945", INITIAL_LON: "74.5229", INITIAL_HEADING: "240", INITIAL_SPEED: "60"}
     depends_on: {jt808: {condition: service_healthy}}
     networks: [tda]
     profiles: [sim]
@@ -520,7 +520,7 @@ services:
   p901-8:
     image: trackanydevice/p901-device:0.1.1
     container_name: p901-8
-    environment: {DEVICE_IMEI: "86000000000008", SERVER_ADDR: "jt808:7018", LOCATION_INTERVAL: "2s", INITIAL_LAT: "31.4180", INITIAL_LON: "73.0790", INITIAL_HEADING: "0",   INITIAL_SPEED: "45"}
+    environment: {DEVICE_IMEI: "86000000000008", SERVER_ADDR: "${JT808_HOST:-jt808}:${JT808_PORT:-7018}", LOCATION_INTERVAL: "2s", INITIAL_LAT: "31.4180", INITIAL_LON: "73.0790", INITIAL_HEADING: "0",   INITIAL_SPEED: "45"}
     depends_on: {jt808: {condition: service_healthy}}
     networks: [tda]
     profiles: [sim]
@@ -529,7 +529,7 @@ services:
   p901-9:
     image: trackanydevice/p901-device:0.1.1
     container_name: p901-9
-    environment: {DEVICE_IMEI: "86000000000009", SERVER_ADDR: "jt808:7018", LOCATION_INTERVAL: "2s", INITIAL_LAT: "33.6844", INITIAL_LON: "73.0479", INITIAL_HEADING: "160", INITIAL_SPEED: "35"}
+    environment: {DEVICE_IMEI: "86000000000009", SERVER_ADDR: "${JT808_HOST:-jt808}:${JT808_PORT:-7018}", LOCATION_INTERVAL: "2s", INITIAL_LAT: "33.6844", INITIAL_LON: "73.0479", INITIAL_HEADING: "160", INITIAL_SPEED: "35"}
     depends_on: {jt808: {condition: service_healthy}}
     networks: [tda]
     profiles: [sim]
