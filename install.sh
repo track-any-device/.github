@@ -612,6 +612,7 @@ datasources:
     editable: false
 GRAFANA
 
+  mkdir -p "${INSTALL_DIR}/docker/promtail"
   cat > "${INSTALL_DIR}/docker/promtail/promtail-config.yml" <<'PROMTAIL'
 server:
   http_listen_port: 9080
