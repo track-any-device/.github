@@ -649,6 +649,58 @@ scrape_configs:
         target_label: stream
 PROMTAIL
 
+  # Mount-override for start.sh — fixes route/view cache partial-write bug
+  # without requiring a new Docker image build.
+  mkdir -p "${INSTALL_DIR}/docker/app"
+  cat > "${INSTALL_DIR}/docker/app/start.sh" <<'STARTSH'
+#!/bin/sh
+set -e
+
+echo "Starting app container..."
+cd /var/www/html
+
+mkdir -p \
+    storage/app \
+    storage/framework/cache \
+    storage/framework/sessions \
+    storage/framework/views \
+    storage/logs \
+    bootstrap/cache \
+    /var/log/supervisor
+
+chown -R www-data:www-data storage bootstrap/cache
+chmod -R 775 storage bootstrap/cache
+
+touch storage/logs/laravel.log
+chown www-data:www-data storage/logs/laravel.log
+chmod 664 storage/logs/laravel.log
+
+rm -f bootstrap/cache/packages.php bootstrap/cache/services.php
+
+(
+    flock -x 200
+    composer install --no-dev --optimize-autoloader --no-interaction --no-scripts 2>/dev/null || true
+) 200>/var/www/html/.composer-install.lock
+php artisan optimize:clear 2>/dev/null || true
+
+pnpm install --frozen-lockfile 2>/dev/null || true
+pnpm run build 2>/dev/null || true
+
+php artisan package:discover --ansi 2>/dev/null || true
+php artisan storage:link 2>/dev/null || true
+php artisan config:cache 2>/dev/null || true
+# If route:cache fails (e.g. duplicate route names across surfaces), clear the
+# partial cache so dynamic routing is used instead of a broken cache file.
+php artisan route:cache 2>/dev/null || php artisan route:clear 2>/dev/null || true
+# If view:cache fails (e.g. Filament components not present in api surface),
+# clear any partial compilations so views compile on demand.
+php artisan view:cache 2>/dev/null || php artisan view:clear 2>/dev/null || true
+
+echo "Starting supervisor..."
+exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
+STARTSH
+  chmod +x "${INSTALL_DIR}/docker/app/start.sh"
+
   ok "Docker config files written"
 }
 
@@ -757,6 +809,8 @@ services:
     <<: *app-base
     image: ${ORG}/server-api:latest
     container_name: api
+    volumes:
+      - ./docker/app/start.sh:/start.sh:ro
     environment:
       <<: *app-env
       APP_SURFACE: api
@@ -764,6 +818,7 @@ services:
       APP_KEY: \${API_APP_KEY}
       SSO_SERVER_URL: https://\${LOGIN_DOMAIN}
       LOG_CHANNEL: stderr
+      APP_DEBUG: \${APP_DEBUG:-false}
       # JT808 onboarding — sent to devices via SMS to configure their TCP endpoint
       JT808_HOST: \${JT808_HOST:-}
       JT808_PORT: \${JT808_PORT:-7018}
