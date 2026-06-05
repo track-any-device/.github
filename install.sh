@@ -1011,7 +1011,7 @@ services:
     depends_on:
       jt808: {condition: service_healthy}
     environment:
-      DEVICE_IMEI: "00000000000000"
+      DEVICE_IMEI: "030000000000"
       SERVER_ADDR: "\${JT808_HOST:-jt808}:\${JT808_PORT:-7018}"
       LOCATION_INTERVAL: "2s"
       INITIAL_LAT: "31.5204"
@@ -1028,7 +1028,7 @@ services:
     depends_on:
       jt808: {condition: service_healthy}
     environment:
-      DEVICE_IMEI: "11111111111111"
+      DEVICE_IMEI: "030000000001"
       SERVER_ADDR: "\${JT808_HOST:-jt808}:\${JT808_PORT:-7018}"
       LOCATION_INTERVAL: "2s"
       INITIAL_LAT: "31.4697"
@@ -1045,7 +1045,7 @@ services:
     depends_on:
       jt808: {condition: service_healthy}
     environment:
-      DEVICE_IMEI: "22222222222222"
+      DEVICE_IMEI: "030000000002"
       SERVER_ADDR: "\${JT808_HOST:-jt808}:\${JT808_PORT:-7018}"
       LOCATION_INTERVAL: "2s"
       INITIAL_LAT: "31.5497"
@@ -1062,7 +1062,7 @@ services:
     depends_on:
       jt808: {condition: service_healthy}
     environment:
-      DEVICE_IMEI: "33333333333333"
+      DEVICE_IMEI: "030000000003"
       SERVER_ADDR: "\${JT808_HOST:-jt808}:\${JT808_PORT:-7018}"
       LOCATION_INTERVAL: "2s"
       INITIAL_LAT: "31.4553"
@@ -1079,7 +1079,7 @@ services:
     depends_on:
       jt808: {condition: service_healthy}
     environment:
-      DEVICE_IMEI: "44444444444444"
+      DEVICE_IMEI: "030000000004"
       SERVER_ADDR: "\${JT808_HOST:-jt808}:\${JT808_PORT:-7018}"
       LOCATION_INTERVAL: "2s"
       INITIAL_LAT: "31.5820"
@@ -1096,7 +1096,7 @@ services:
     depends_on:
       jt808: {condition: service_healthy}
     environment:
-      DEVICE_IMEI: "55555555555555"
+      DEVICE_IMEI: "030000000005"
       SERVER_ADDR: "\${JT808_HOST:-jt808}:\${JT808_PORT:-7018}"
       LOCATION_INTERVAL: "2s"
       INITIAL_LAT: "31.7131"
@@ -1113,7 +1113,7 @@ services:
     depends_on:
       jt808: {condition: service_healthy}
     environment:
-      DEVICE_IMEI: "66666666666666"
+      DEVICE_IMEI: "030000000006"
       SERVER_ADDR: "\${JT808_HOST:-jt808}:\${JT808_PORT:-7018}"
       LOCATION_INTERVAL: "2s"
       INITIAL_LAT: "32.1877"
@@ -1130,7 +1130,7 @@ services:
     depends_on:
       jt808: {condition: service_healthy}
     environment:
-      DEVICE_IMEI: "77777777777777"
+      DEVICE_IMEI: "030000000007"
       SERVER_ADDR: "\${JT808_HOST:-jt808}:\${JT808_PORT:-7018}"
       LOCATION_INTERVAL: "2s"
       INITIAL_LAT: "32.4945"
@@ -1147,7 +1147,7 @@ services:
     depends_on:
       jt808: {condition: service_healthy}
     environment:
-      DEVICE_IMEI: "88888888888888"
+      DEVICE_IMEI: "030000000008"
       SERVER_ADDR: "\${JT808_HOST:-jt808}:\${JT808_PORT:-7018}"
       LOCATION_INTERVAL: "2s"
       INITIAL_LAT: "31.4180"
@@ -1164,7 +1164,7 @@ services:
     depends_on:
       jt808: {condition: service_healthy}
     environment:
-      DEVICE_IMEI: "99999999999999"
+      DEVICE_IMEI: "030000000009"
       SERVER_ADDR: "\${JT808_HOST:-jt808}:\${JT808_PORT:-7018}"
       LOCATION_INTERVAL: "2s"
       INITIAL_LAT: "33.6844"
