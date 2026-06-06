@@ -35,7 +35,6 @@ TAD_SERVER_GRAPHQL_TAG="v0.0.7"
 TAD_SERVER_TENANT_TAG="latest"
 TAD_SERVER_WEB_TAG="latest"
 TAD_JT808_TAG="0.1.1"
-TAD_P901_TAG="0.1.1"
 # VERSIONS_END
 
 # Third-party pinned versions (upgrade intentionally)
@@ -128,7 +127,7 @@ fetch_versions() {
   [[ -n "$graphql" ]] && TAD_SERVER_GRAPHQL_TAG="$graphql" || warn "server-graphql: using fallback ${TAD_SERVER_GRAPHQL_TAG}"
   [[ -n "$tenant"  ]] && TAD_SERVER_TENANT_TAG="$tenant"   # stays 'latest' if no release
   [[ -n "$web"     ]] && TAD_SERVER_WEB_TAG="$web"         # stays 'latest' if no release
-  [[ -n "$jt808"   ]] && TAD_JT808_TAG="$jt808" && TAD_P901_TAG="$jt808"
+  [[ -n "$jt808"   ]] && TAD_JT808_TAG="$jt808"
 
   echo ""
   echo -e "${BOLD}── Resolved versions ───────────────────────────────────────────${RESET}"
@@ -639,8 +638,7 @@ scrape_configs:
               - cron
               - queue
               - jt808
-              - p901-0
-              - p901-1
+
     relabel_configs:
       - source_labels: ['__meta_docker_container_name']
         regex: '/?(.*)'
@@ -999,178 +997,6 @@ services:
     environment:
       FRP_SERVER_ADDR: \${FRP_SERVER_ADDR:-}
       FRP_TOKEN:       \${FRP_TOKEN:-change-me}
-
-  # ── GPS simulators (docker compose --profile sim up -d) ───────────────────
-  # 10 P901 simulators spread across Punjab. IMEIs match DeviceSeeder (86-prefix).
-  p901-0:
-    image: ${ORG}/p901-device:latest
-    container_name: p901-0
-    networks: [tda]
-    restart: unless-stopped
-    profiles: [sim]
-    depends_on:
-      jt808: {condition: service_healthy}
-    environment:
-      DEVICE_IMEI: "030000000000"
-      SERVER_ADDR: "\${JT808_HOST:-jt808}:\${JT808_PORT:-7018}"
-      LOCATION_INTERVAL: "2s"
-      INITIAL_LAT: "31.5204"
-      INITIAL_LON: "74.3587"
-      INITIAL_HEADING: "45"
-      INITIAL_SPEED: "40"
-
-  p901-1:
-    image: ${ORG}/p901-device:latest
-    container_name: p901-1
-    networks: [tda]
-    restart: unless-stopped
-    profiles: [sim]
-    depends_on:
-      jt808: {condition: service_healthy}
-    environment:
-      DEVICE_IMEI: "030000000001"
-      SERVER_ADDR: "\${JT808_HOST:-jt808}:\${JT808_PORT:-7018}"
-      LOCATION_INTERVAL: "2s"
-      INITIAL_LAT: "31.4697"
-      INITIAL_LON: "74.4074"
-      INITIAL_HEADING: "135"
-      INITIAL_SPEED: "55"
-
-  p901-2:
-    image: ${ORG}/p901-device:latest
-    container_name: p901-2
-    networks: [tda]
-    restart: unless-stopped
-    profiles: [sim]
-    depends_on:
-      jt808: {condition: service_healthy}
-    environment:
-      DEVICE_IMEI: "030000000002"
-      SERVER_ADDR: "\${JT808_HOST:-jt808}:\${JT808_PORT:-7018}"
-      LOCATION_INTERVAL: "2s"
-      INITIAL_LAT: "31.5497"
-      INITIAL_LON: "74.3436"
-      INITIAL_HEADING: "270"
-      INITIAL_SPEED: "30"
-
-  p901-3:
-    image: ${ORG}/p901-device:latest
-    container_name: p901-3
-    networks: [tda]
-    restart: unless-stopped
-    profiles: [sim]
-    depends_on:
-      jt808: {condition: service_healthy}
-    environment:
-      DEVICE_IMEI: "030000000003"
-      SERVER_ADDR: "\${JT808_HOST:-jt808}:\${JT808_PORT:-7018}"
-      LOCATION_INTERVAL: "2s"
-      INITIAL_LAT: "31.4553"
-      INITIAL_LON: "74.3198"
-      INITIAL_HEADING: "180"
-      INITIAL_SPEED: "65"
-
-  p901-4:
-    image: ${ORG}/p901-device:latest
-    container_name: p901-4
-    networks: [tda]
-    restart: unless-stopped
-    profiles: [sim]
-    depends_on:
-      jt808: {condition: service_healthy}
-    environment:
-      DEVICE_IMEI: "030000000004"
-      SERVER_ADDR: "\${JT808_HOST:-jt808}:\${JT808_PORT:-7018}"
-      LOCATION_INTERVAL: "2s"
-      INITIAL_LAT: "31.5820"
-      INITIAL_LON: "74.3294"
-      INITIAL_HEADING: "315"
-      INITIAL_SPEED: "80"
-
-  p901-5:
-    image: ${ORG}/p901-device:latest
-    container_name: p901-5
-    networks: [tda]
-    restart: unless-stopped
-    profiles: [sim]
-    depends_on:
-      jt808: {condition: service_healthy}
-    environment:
-      DEVICE_IMEI: "030000000005"
-      SERVER_ADDR: "\${JT808_HOST:-jt808}:\${JT808_PORT:-7018}"
-      LOCATION_INTERVAL: "2s"
-      INITIAL_LAT: "31.7131"
-      INITIAL_LON: "73.9756"
-      INITIAL_HEADING: "90"
-      INITIAL_SPEED: "70"
-
-  p901-6:
-    image: ${ORG}/p901-device:latest
-    container_name: p901-6
-    networks: [tda]
-    restart: unless-stopped
-    profiles: [sim]
-    depends_on:
-      jt808: {condition: service_healthy}
-    environment:
-      DEVICE_IMEI: "030000000006"
-      SERVER_ADDR: "\${JT808_HOST:-jt808}:\${JT808_PORT:-7018}"
-      LOCATION_INTERVAL: "2s"
-      INITIAL_LAT: "32.1877"
-      INITIAL_LON: "74.1945"
-      INITIAL_HEADING: "200"
-      INITIAL_SPEED: "50"
-
-  p901-7:
-    image: ${ORG}/p901-device:latest
-    container_name: p901-7
-    networks: [tda]
-    restart: unless-stopped
-    profiles: [sim]
-    depends_on:
-      jt808: {condition: service_healthy}
-    environment:
-      DEVICE_IMEI: "030000000007"
-      SERVER_ADDR: "\${JT808_HOST:-jt808}:\${JT808_PORT:-7018}"
-      LOCATION_INTERVAL: "2s"
-      INITIAL_LAT: "32.4945"
-      INITIAL_LON: "74.5229"
-      INITIAL_HEADING: "240"
-      INITIAL_SPEED: "60"
-
-  p901-8:
-    image: ${ORG}/p901-device:latest
-    container_name: p901-8
-    networks: [tda]
-    restart: unless-stopped
-    profiles: [sim]
-    depends_on:
-      jt808: {condition: service_healthy}
-    environment:
-      DEVICE_IMEI: "030000000008"
-      SERVER_ADDR: "\${JT808_HOST:-jt808}:\${JT808_PORT:-7018}"
-      LOCATION_INTERVAL: "2s"
-      INITIAL_LAT: "31.4180"
-      INITIAL_LON: "73.0790"
-      INITIAL_HEADING: "0"
-      INITIAL_SPEED: "45"
-
-  p901-9:
-    image: ${ORG}/p901-device:latest
-    container_name: p901-9
-    networks: [tda]
-    restart: unless-stopped
-    profiles: [sim]
-    depends_on:
-      jt808: {condition: service_healthy}
-    environment:
-      DEVICE_IMEI: "030000000009"
-      SERVER_ADDR: "\${JT808_HOST:-jt808}:\${JT808_PORT:-7018}"
-      LOCATION_INTERVAL: "2s"
-      INITIAL_LAT: "33.6844"
-      INITIAL_LON: "73.0479"
-      INITIAL_HEADING: "160"
-      INITIAL_SPEED: "35"
 
 networks:
   tda:
