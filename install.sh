@@ -800,9 +800,14 @@ services:
       SSO_SERVER_URL: https://\${LOGIN_DOMAIN}
       LOG_CHANNEL: stderr
       APP_DEBUG: \${APP_DEBUG:-false}
-      # JT808 onboarding — sent to devices via SMS to configure their TCP endpoint
+      # Protocol server endpoints — sent to devices via SMS during onboarding
       JT808_HOST: \${JT808_HOST:-}
       JT808_PORT: \${JT808_PORT:-7018}
+      GT06_HOST:  \${GT06_HOST:-}
+      GT06_PORT:  \${GT06_PORT:-7019}
+      H02_HOST:   \${H02_HOST:-}
+      H02_TCP_PORT: \${H02_TCP_PORT:-7020}
+      H02_UDP_PORT: \${H02_UDP_PORT:-7021}
 
   graphql:
     <<: *app-base
@@ -833,6 +838,11 @@ services:
       LOG_CHANNEL: stderr
       JT808_HOST: \${JT808_HOST:-}
       JT808_PORT: \${JT808_PORT:-7018}
+      GT06_HOST:  \${GT06_HOST:-}
+      GT06_PORT:  \${GT06_PORT:-7019}
+      H02_HOST:   \${H02_HOST:-}
+      H02_TCP_PORT: \${H02_TCP_PORT:-7020}
+      H02_UDP_PORT: \${H02_UDP_PORT:-7021}
 
   queue:
     <<: *app-base
@@ -845,6 +855,11 @@ services:
       LOG_CHANNEL: stderr
       JT808_HOST: \${JT808_HOST:-}
       JT808_PORT: \${JT808_PORT:-7018}
+      GT06_HOST:  \${GT06_HOST:-}
+      GT06_PORT:  \${GT06_PORT:-7019}
+      H02_HOST:   \${H02_HOST:-}
+      H02_TCP_PORT: \${H02_TCP_PORT:-7020}
+      H02_UDP_PORT: \${H02_UDP_PORT:-7021}
 
   cli:
     image: ${ORG}/server-cli:latest
@@ -1130,6 +1145,35 @@ COMPOSE
   ok "docker-compose.yml generated"
 }
 
+# ── Patch missing vars into an existing .env (used by --update) ──────────────
+# Appends any variable that is absent from the file so new protocol servers
+# added after the initial install get their defaults without overwriting anything.
+patch_env() {
+  local env_file="${INSTALL_DIR}/.env"
+  [[ -f "$env_file" ]] || return 0
+  $DRY_RUN && { echo "  [dry] Would patch missing vars into ${env_file}"; return 0; }
+
+  local patched=false
+
+  _ensure_var() {
+    local key="$1" default="$2"
+    if ! grep -q "^${key}=" "$env_file" 2>/dev/null; then
+      echo "${key}=${default}" >> "$env_file"
+      ok "Added ${key}=${default} to .env"
+      patched=true
+    fi
+  }
+
+  _ensure_var "GT06_HOST"     ""
+  _ensure_var "GT06_PORT"     "7019"
+  _ensure_var "H02_HOST"      ""
+  _ensure_var "H02_TCP_PORT"  "7020"
+  _ensure_var "H02_UDP_PORT"  "7021"
+
+  $patched && log "New protocol env vars added to ${env_file}"
+  return 0
+}
+
 # ── Stack operations ──────────────────────────────────────────────────────────
 stack_up() {
   local compose="${INSTALL_DIR}/docker-compose.yml"
@@ -1268,6 +1312,9 @@ main() {
   if $UPDATE_ONLY; then
     # ── UPDATE: pull latest versions, regenerate compose, restart, migrate ───
     # Source .env so compose generation has access to all variables
+    set -a; source "${INSTALL_DIR}/.env" 2>/dev/null || true; set +a
+    patch_env
+    # Re-source after patching so newly added vars are available for compose gen
     set -a; source "${INSTALL_DIR}/.env" 2>/dev/null || true; set +a
     write_docker_configs
     generate_compose
