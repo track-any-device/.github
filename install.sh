@@ -894,54 +894,81 @@ services:
       start_period: 30s
 
   gt06:
-    image: trackanydevice/server-gt06:${TAD_GT06_TAG}
+    image: trackanydevice/server-gt06:latest
     container_name: gt06
     ports: ["7019:7019"]
     networks: [tda]
     restart: unless-stopped
     depends_on:
+      mysql: {condition: service_healthy}
       redis: {condition: service_started}
     environment:
-      GT06_ADDR:      :7019
+      GT06_TCP_ADDR:  :7019
+      GT06_HTTP_ADDR: :9091
       REDIS_HOST:     redis
       REDIS_PORT:     6379
-      REDIS_DB:       1
+      REDIS_GT06_DB:  1
       STREAM_KEY:     gt06:telemetry
       STREAM_MAX_LEN: "100000"
       CMD_CHANNEL:    "gt06:cmd:"
+      DB_ENABLED:     "true"
+      DB_HOST:        mysql
+      DB_PORT:        3306
+      DB_DATABASE:    \${MYSQL_DATABASE}
+      DB_USERNAME:    \${MYSQL_USER}
+      DB_PASSWORD:    \${MYSQL_PASSWORD}
+      DB_DEVICE_TYPE_ID: 2
 
   h02-tcp:
-    image: trackanydevice/server-h02-tcp:${TAD_H02_TAG}
+    image: trackanydevice/server-h02-tcp:latest
     container_name: h02-tcp
     ports: ["7020:7020"]
     networks: [tda]
     restart: unless-stopped
     depends_on:
+      mysql: {condition: service_healthy}
       redis: {condition: service_started}
     environment:
-      H02_ADDR:       :7020
-      REDIS_HOST:     redis
-      REDIS_PORT:     6379
-      REDIS_DB:       2
-      STREAM_KEY:     h02:telemetry
-      STREAM_MAX_LEN: "100000"
-      CMD_CHANNEL:    "h02:cmd:"
+      H02_TCP_ADDR:      :7020
+      H02_TCP_HTTP_ADDR: :9092
+      REDIS_HOST:        redis
+      REDIS_PORT:        6379
+      REDIS_H02_DB:      2
+      STREAM_KEY:        h02:telemetry
+      STREAM_MAX_LEN:    "100000"
+      CMD_CHANNEL:       "h02:cmd:"
+      DB_ENABLED:        "true"
+      DB_HOST:           mysql
+      DB_PORT:           3306
+      DB_DATABASE:       \${MYSQL_DATABASE}
+      DB_USERNAME:       \${MYSQL_USER}
+      DB_PASSWORD:       \${MYSQL_PASSWORD}
+      DB_DEVICE_TYPE_ID: 3
 
   h02-udp:
-    image: trackanydevice/server-h02-udp:${TAD_H02_TAG}
+    image: trackanydevice/server-h02-udp:latest
     container_name: h02-udp
     ports: ["7021:7021/udp"]
     networks: [tda]
     restart: unless-stopped
     depends_on:
+      mysql: {condition: service_healthy}
       redis: {condition: service_started}
     environment:
-      H02_ADDR:       :7021
-      REDIS_HOST:     redis
-      REDIS_PORT:     6379
-      REDIS_DB:       2
-      STREAM_KEY:     h02:telemetry
-      STREAM_MAX_LEN: "100000"
+      H02_UDP_ADDR:      :7021
+      H02_UDP_HTTP_ADDR: :9093
+      REDIS_HOST:        redis
+      REDIS_PORT:        6379
+      REDIS_H02_DB:      2
+      STREAM_KEY:        h02:telemetry
+      STREAM_MAX_LEN:    "100000"
+      DB_ENABLED:        "true"
+      DB_HOST:           mysql
+      DB_PORT:           3306
+      DB_DATABASE:       \${MYSQL_DATABASE}
+      DB_USERNAME:       \${MYSQL_USER}
+      DB_PASSWORD:       \${MYSQL_PASSWORD}
+      DB_DEVICE_TYPE_ID: 3
 
   mysql:
     image: mysql:${MYSQL_VERSION}
