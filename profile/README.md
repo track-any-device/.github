@@ -21,7 +21,7 @@ Track Any Device is a SaaS fleet tracking platform for organisations that need t
 
 **Core capabilities:**
 
-- **Multi-protocol device support** — JT/T 808-2019 TCP, TAD-101 WebSocket, SMS fallback. One platform, any GPS hardware.
+- **Multi-protocol device support** — JT/T 808-2019 TCP, GT06/Concox binary TCP, H02/Sinotrack ASCII TCP+UDP, TAD-101 WebSocket, SMS fallback. One platform, any GPS hardware.
 - **Multi-tenant architecture** — each organisation gets an isolated subdomain portal (`{slug}.track-any-device.com`) with full data separation at the query layer.
 - **Real-time tracking** — live map, device location streams, SOS alerts, geofence violations — all pushed via WebSocket.
 - **Beat geo-fencing** — define patrol zones (polygons or circles), assign devices, and detect violations automatically.
@@ -55,10 +55,14 @@ Track Any Device is a SaaS fleet tracking platform for organisations that need t
 │  {slug}.tad.com   │      │  login.tad.com           │         │  admin.tad.com      │
 └───────────────────┘      └─────────────────────────┘         └────────────────────┘
 
-         ┌─────────────────────────────────────────────────────────────────┐
-         │  server-jt808  (Go 1.23)                                        │
-         │  JT/T 808-2019 TCP listener → Redis Stream → app/ queue worker  │
-         └─────────────────────────────────────────────────────────────────┘
+  ┌──────────────────────────────────────────────────────────────────────────────────┐
+  │  Protocol Gateway — Go 1.23 TCP/UDP servers → Redis Streams → Laravel consumers  │
+  │                                                                                  │
+  │  server-jt808   :7018  JT/T 808-2019 binary TCP → jt808:telemetry (Redis DB 0)  │
+  │  server-gt06    :7019  GT06/Concox binary TCP   → gt06:telemetry  (Redis DB 1)  │
+  │  server-h02-tcp :7020  H02/Sinotrack ASCII TCP  → h02:telemetry   (Redis DB 2)  │
+  │  server-h02-udp :7021  H02/Sinotrack ASCII UDP  → h02:telemetry   (Redis DB 2)  │
+  └──────────────────────────────────────────────────────────────────────────────────┘
 
          ┌─────────────────────────────────────────────────────────────────┐
          │  mobile-app  (React Native / Expo)                              │
@@ -77,6 +81,8 @@ Track Any Device is a SaaS fleet tracking platform for organisations that need t
 | [package-core](https://github.com/track-any-device/package-core) | `track-any-device/core` | Domain models, migrations, seeders, shared services, events, jobs |
 | [package-drivers](https://github.com/track-any-device/package-drivers) | `track-any-device/drivers` | GPS device protocol adapters (GF07, AOT120, P901) |
 | [package-jt808](https://github.com/track-any-device/package-jt808) | `track-any-device/jt808` | JT/T 808-2019 stream consumer and command dispatcher |
+| [package-gt06](https://github.com/track-any-device/package-gt06) | `track-any-device/gt06` | GT06/Concox stream consumer and command dispatcher |
+| [package-h02](https://github.com/track-any-device/package-h02) | `track-any-device/h02` | H02/Sinotrack stream consumer (TCP + UDP) |
 | [package-tad101](https://github.com/track-any-device/package-tad101) | `track-any-device/tad101` | TAD-101 WebSocket device protocol |
 | [package-sms-gateway](https://github.com/track-any-device/package-sms-gateway) | `track-any-device/sms-gateway` | SMS HTTP gateway client |
 | [package-sso-server](https://github.com/track-any-device/package-sso-server) | `track-any-device/sso-server` | OAuth2 identity provider (Laravel Passport) |
@@ -100,6 +106,8 @@ Track Any Device is a SaaS fleet tracking platform for organisations that need t
 | [server-admin](https://github.com/track-any-device/server-admin) | `server-admin` | Central admin panel (Filament v4) |
 | [server-graphql](https://github.com/track-any-device/server-graphql) | `server-graphql` | GraphQL API — public content and central staff queries |
 | [server-jt808](https://github.com/track-any-device/server-jt808) | `server-jt808` | Go TCP server for JT/T 808-2019 GPS devices |
+| [server-gt06](https://github.com/track-any-device/server-gt06) | `server-gt06` | Go TCP server for GT06/Concox binary GPS devices |
+| [server-h02](https://github.com/track-any-device/server-h02) | `server-h02-tcp` · `server-h02-udp` | Go TCP+UDP server for H02/Sinotrack ASCII GPS devices |
 | [web](https://github.com/track-any-device/web) | `server-web` | Next.js 15 — marketing site and authenticated "my" user portal |
 | [mobile-app](https://github.com/track-any-device/mobile-app) | — | React Native / Expo — iOS and Android apps |
 
@@ -122,6 +130,8 @@ package-sms-gateway
   └─ package-core
        ├─ package-drivers
        ├─ package-jt808
+       ├─ package-gt06
+       ├─ package-h02
        ├─ package-tad101
        ├─ package-sso-server
        ├─ package-sso-client
@@ -132,6 +142,8 @@ ui-kit                          (parallel with packages — independent)
   └─ server-graphql
   └─ server-admin
   └─ server-jt808
+  └─ server-gt06
+  └─ server-h02
   └─ server-tenant
   └─ app
        └─ web
@@ -149,13 +161,14 @@ Models, migrations, and seeders live exclusively in `track-any-device/core`. No 
 ```
 sms-gateway ──────────────────────────────────────► core
                                                       │
-                   ┌──────────────┬─────────────────┬┴──────────────┬──────────────┐
-                   │              │                  │               │              │
-                drivers         jt808             tad101          sso-server    sso-client
-                                                                      │              │
-                                                                  server-login  server-tenant
-                                                                                server-graphql
-                                                                                    app
+          ┌──────────────┬──────────┬────────────────┬┴──────────────┬──────────────┐
+          │              │          │                │               │              │
+       drivers         jt808      gt06             h02           tad101     sso-server/sso-client
+                                                                                   │
+                                                                               server-login
+                                                                               server-tenant
+                                                                               server-graphql
+                                                                                   app
 ```
 
 ---
