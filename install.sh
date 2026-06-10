@@ -579,6 +579,7 @@ create_directories() {
   run "mkdir -p '${INSTALL_DIR}/storage/oauth-keys'"
   run "mkdir -p '${INSTALL_DIR}/docker/loki'"
   run "mkdir -p '${INSTALL_DIR}/docker/grafana/provisioning/datasources'"
+  run "mkdir -p '${INSTALL_DIR}/docker/grafana/provisioning/dashboards'"
   run "mkdir -p '${INSTALL_DIR}/docker/promtail'"
   run "mkdir -p '${INSTALL_DIR}/docker/frpc'"
   if ! $DRY_RUN; then
@@ -636,7 +637,7 @@ compactor:
 LOKI
 
   mkdir -p "${INSTALL_DIR}/docker/grafana/provisioning/datasources"
-  cat > "${INSTALL_DIR}/docker/grafana/provisioning/datasources/loki.yml" <<'GRAFANA'
+  cat > "${INSTALL_DIR}/docker/grafana/provisioning/datasources/loki.yml" <<'GRAFANA_DS'
 apiVersion: 1
 
 datasources:
@@ -646,7 +647,155 @@ datasources:
     url: http://loki:3100
     isDefault: true
     editable: false
-GRAFANA
+GRAFANA_DS
+
+  mkdir -p "${INSTALL_DIR}/docker/grafana/provisioning/dashboards"
+  cat > "${INSTALL_DIR}/docker/grafana/provisioning/dashboards/dashboards.yml" <<'GRAFANA_DASH'
+apiVersion: 1
+
+providers:
+  - name: TAD
+    folder: TAD Platform
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/dashboards
+GRAFANA_DASH
+
+  cat > "${INSTALL_DIR}/docker/grafana/provisioning/dashboards/platform-logs.json" <<'DASHBOARD'
+{
+  "title": "TAD Platform — Logs & Errors",
+  "uid": "tad-platform-logs",
+  "tags": ["tad", "logs"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "30s",
+  "time": {"from": "now-1h", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "title": "Log Volume by Service",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "options": {"legend": {"displayMode": "table", "placement": "right"}},
+      "targets": [{
+        "datasource": {"type": "loki"},
+        "expr": "sum by(container) (count_over_time({container=~\".+\"}[$__interval]))",
+        "legendFormat": "{{container}}"
+      }]
+    },
+    {
+      "id": 2,
+      "title": "Error & Warning Rate by Service",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"fixedColor": "red", "mode": "fixed"},
+          "custom": {"lineWidth": 2}
+        }
+      },
+      "options": {"legend": {"displayMode": "table", "placement": "right"}},
+      "targets": [{
+        "datasource": {"type": "loki"},
+        "expr": "sum by(container) (count_over_time({container=~\".+\", level=~\"error|fatal|critical\"}[$__interval]))",
+        "legendFormat": "{{container}}"
+      }]
+    },
+    {
+      "id": 3,
+      "title": "Protocol Servers — Live Logs",
+      "type": "logs",
+      "gridPos": {"h": 12, "w": 12, "x": 0, "y": 8},
+      "options": {
+        "dedupStrategy": "none",
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [{
+        "datasource": {"type": "loki"},
+        "expr": "{service_type=\"go_server\"}",
+        "legendFormat": ""
+      }]
+    },
+    {
+      "id": 4,
+      "title": "All Services — Errors & Warnings",
+      "type": "logs",
+      "gridPos": {"h": 12, "w": 12, "x": 12, "y": 8},
+      "options": {
+        "dedupStrategy": "none",
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [{
+        "datasource": {"type": "loki"},
+        "expr": "{container=~\".+\", level=~\"error|warn|warning|fatal|critical\"}",
+        "legendFormat": ""
+      }]
+    },
+    {
+      "id": 5,
+      "title": "GT06 Server Logs",
+      "type": "logs",
+      "gridPos": {"h": 10, "w": 8, "x": 0, "y": 20},
+      "options": {
+        "dedupStrategy": "none",
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [{
+        "datasource": {"type": "loki"},
+        "expr": "{container=\"gt06\"}",
+        "legendFormat": ""
+      }]
+    },
+    {
+      "id": 6,
+      "title": "H02 Server Logs (TCP + UDP)",
+      "type": "logs",
+      "gridPos": {"h": 10, "w": 8, "x": 8, "y": 20},
+      "options": {
+        "dedupStrategy": "none",
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [{
+        "datasource": {"type": "loki"},
+        "expr": "{container=~\"h02-tcp|h02-udp\"}",
+        "legendFormat": ""
+      }]
+    },
+    {
+      "id": 7,
+      "title": "JT808 Server Logs",
+      "type": "logs",
+      "gridPos": {"h": 10, "w": 8, "x": 16, "y": 20},
+      "options": {
+        "dedupStrategy": "none",
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [{
+        "datasource": {"type": "loki"},
+        "expr": "{container=\"jt808\"}",
+        "legendFormat": ""
+      }]
+    }
+  ]
+}
+DASHBOARD
 
   mkdir -p "${INSTALL_DIR}/docker/promtail"
   cat > "${INSTALL_DIR}/docker/promtail/promtail-config.yml" <<'PROMTAIL'
@@ -660,7 +809,11 @@ clients:
   - url: http://loki:3100/loki/api/v1/push
 
 scrape_configs:
-  - job_name: docker
+
+  # ── Laravel application services ──────────────────────────────────────────
+  # Logs may be plain-text or JSON depending on LOG_CHANNEL setting.
+  # JSON parsing is attempted; on failure level label is simply absent.
+  - job_name: laravel
     docker_sd_configs:
       - host: unix:///var/run/docker.sock
         refresh_interval: 5s
@@ -674,17 +827,51 @@ scrape_configs:
               - cli
               - cron
               - queue
-              - jt808
-              - gt06
-              - h02-tcp
-              - h02-udp
-
     relabel_configs:
       - source_labels: ['__meta_docker_container_name']
         regex: '/?(.*)'
         target_label: container
       - source_labels: ['__meta_docker_container_log_stream']
         target_label: stream
+      - target_label: service_type
+        replacement: laravel
+    pipeline_stages:
+      - json:
+          expressions:
+            level: level
+      - labels:
+          level:
+
+  # ── Go protocol servers ───────────────────────────────────────────────────
+  # All four servers use zap production logger (JSON output).
+  # Fields extracted: level, msg. Level is promoted to a Loki stream label
+  # so dashboards can filter {level="error"} across all protocol servers.
+  - job_name: protocol_servers
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          - name: name
+            values:
+              - jt808
+              - gt06
+              - h02-tcp
+              - h02-udp
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/?(.*)'
+        target_label: container
+      - source_labels: ['__meta_docker_container_log_stream']
+        target_label: stream
+      - target_label: service_type
+        replacement: go_server
+    pipeline_stages:
+      - json:
+          expressions:
+            level: level
+            msg:   msg
+      - labels:
+          level:
 PROMTAIL
 
   ok "Docker config files written"
