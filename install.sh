@@ -944,6 +944,9 @@ x-app-env: &app-env
   INFLUXDB_TOKEN:  \${INFLUXDB_TOKEN}
   PASSPORT_PRIVATE_KEY_B64: \${PASSPORT_PRIVATE_KEY_B64}
   PASSPORT_PUBLIC_KEY_B64:  \${PASSPORT_PUBLIC_KEY_B64}
+  SMS_GATEWAY_URL:     \${SMS_GATEWAY_URL:-}
+  SMS_GATEWAY_API_KEY: \${SMS_GATEWAY_API_KEY:-}
+  SMS_MASTER_NUMBER:   \${SMS_MASTER_NUMBER:-}
 
 services:
 
@@ -958,9 +961,6 @@ services:
       APP_URL: https://\${LOGIN_DOMAIN}
       APP_KEY: \${LOGIN_APP_KEY}
       SESSION_COOKIE: login_session
-      SMS_MASTER_NUMBER:   \${SMS_MASTER_NUMBER:-}
-      SMS_GATEWAY_URL:     \${SMS_GATEWAY_URL:-}
-      SMS_GATEWAY_API_KEY: \${SMS_GATEWAY_API_KEY:-}
 
   admin:
     <<: *app-base
@@ -1351,11 +1351,14 @@ patch_env() {
     fi
   }
 
-  _ensure_var "GT06_HOST"     ""
-  _ensure_var "GT06_PORT"     "7019"
-  _ensure_var "H02_HOST"      ""
-  _ensure_var "H02_TCP_PORT"  "7020"
-  _ensure_var "H02_UDP_PORT"  "7021"
+  _ensure_var "GT06_HOST"          ""
+  _ensure_var "GT06_PORT"          "7019"
+  _ensure_var "H02_HOST"           ""
+  _ensure_var "H02_TCP_PORT"       "7020"
+  _ensure_var "H02_UDP_PORT"       "7021"
+  _ensure_var "SMS_GATEWAY_URL"    ""
+  _ensure_var "SMS_GATEWAY_API_KEY" ""
+  _ensure_var "SMS_MASTER_NUMBER"  ""
 
   $patched && log "New protocol env vars added to ${env_file}"
   return 0
