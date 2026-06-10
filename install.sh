@@ -35,6 +35,8 @@ TAD_SERVER_GRAPHQL_TAG="v0.0.7"
 TAD_SERVER_TENANT_TAG="latest"
 TAD_SERVER_WEB_TAG="latest"
 TAD_JT808_TAG="0.1.1"
+TAD_GT06_TAG="0.1.1"
+TAD_H02_TAG="0.1.1"
 # VERSIONS_END
 
 # Third-party pinned versions (upgrade intentionally)
@@ -110,7 +112,7 @@ _gh_latest() {
 fetch_versions() {
   log "Fetching latest release versions from GitHub..."
 
-  local login admin api graphql tenant web jt808
+  local login admin api graphql tenant web jt808 gt06 h02
 
   login=$(  _gh_latest "server-login")
   admin=$(   _gh_latest "server-admin")
@@ -119,6 +121,8 @@ fetch_versions() {
   tenant=$(  _gh_latest "server-tenant")
   web=$(     _gh_latest "web")
   jt808=$(   _gh_latest "server-jt808")
+  gt06=$(    _gh_latest "server-gt06")
+  h02=$(     _gh_latest "server-h02")
 
   # Apply resolved tags, falling back to the offline defaults for any empty result
   [[ -n "$login"   ]] && TAD_SERVER_LOGIN_TAG="$login"     || warn "server-login:   using fallback ${TAD_SERVER_LOGIN_TAG}"
@@ -128,6 +132,8 @@ fetch_versions() {
   [[ -n "$tenant"  ]] && TAD_SERVER_TENANT_TAG="$tenant"   # stays 'latest' if no release
   [[ -n "$web"     ]] && TAD_SERVER_WEB_TAG="$web"         # stays 'latest' if no release
   [[ -n "$jt808"   ]] && TAD_JT808_TAG="$jt808"
+  [[ -n "$gt06"    ]] && TAD_GT06_TAG="$gt06"
+  [[ -n "$h02"     ]] && TAD_H02_TAG="$h02"
 
   echo ""
   echo -e "${BOLD}── Resolved versions ───────────────────────────────────────────${RESET}"
@@ -137,6 +143,8 @@ fetch_versions() {
   printf "  %-18s %s\n" "server-graphql:"  "${TAD_SERVER_GRAPHQL_TAG}"
   printf "  %-18s %s\n" "server-tenant:"   "${TAD_SERVER_TENANT_TAG}"
   printf "  %-18s %s\n" "jt808-server:"    "${TAD_JT808_TAG}"
+  printf "  %-18s %s\n" "gt06-server:"     "${TAD_GT06_TAG}"
+  printf "  %-18s %s\n" "h02-server:"      "${TAD_H02_TAG}"
   printf "  %-18s %s\n" "web (Pages):"     "Cloudflare Pages → ${TAD_SERVER_WEB_TAG}"
   echo ""
 }
@@ -238,6 +246,11 @@ detect_existing_env() {
   CFG_CF_TOKEN="${CLOUDFLARE_TUNNEL_TOKEN:-}"
   CFG_JT808_HOST="${JT808_HOST:-}"
   CFG_JT808_PORT="${JT808_PORT:-7018}"
+  CFG_GT06_HOST="${GT06_HOST:-}"
+  CFG_GT06_PORT="${GT06_PORT:-7019}"
+  CFG_H02_HOST="${H02_HOST:-}"
+  CFG_H02_TCP_PORT="${H02_TCP_PORT:-7020}"
+  CFG_H02_UDP_PORT="${H02_UDP_PORT:-7021}"
   CFG_SMS_URL="${SMS_GATEWAY_URL:-}"
   CFG_SMS_KEY="${SMS_GATEWAY_API_KEY:-}"
   CFG_SMS_NUMBER="${SMS_MASTER_NUMBER:-}"
@@ -269,6 +282,8 @@ collect_config() {
     echo "  CF Tunnel: ${CFG_CF_TOKEN:-(not configured)}"
     echo "  SMS URL:   ${CFG_SMS_URL:-(not configured)}"
     echo "  JT808:     ${CFG_JT808_HOST:-${CFG_DOMAIN}}:${CFG_JT808_PORT}"
+    echo "  GT06:      ${CFG_GT06_HOST:-${CFG_DOMAIN}}:${CFG_GT06_PORT}"
+    echo "  H02:       ${CFG_H02_HOST:-${CFG_DOMAIN}}:${CFG_H02_TCP_PORT}(tcp)/${CFG_H02_UDP_PORT}(udp)"
     echo ""
     dim "  All secrets (app keys, DB passwords, Passport RSA keys) preserved."
     echo ""
@@ -346,6 +361,13 @@ collect_config() {
   # on a different IP (e.g. a frp VPS with a dedicated public IP).
   CFG_JT808_HOST=$(ask "JT808 host to send in device setup SMS (blank = use APP_DOMAIN)")
   CFG_JT808_PORT=$(ask "JT808 port to send in device setup SMS" "7018")
+
+  CFG_GT06_HOST=$(ask "GT06/Concox host to send in device setup SMS (blank = use APP_DOMAIN)")
+  CFG_GT06_PORT=$(ask "GT06 TCP port" "7019")
+
+  CFG_H02_HOST=$(ask "H02/Sinotrack host to send in device setup SMS (blank = use APP_DOMAIN)")
+  CFG_H02_TCP_PORT=$(ask "H02 TCP port" "7020")
+  CFG_H02_UDP_PORT=$(ask "H02 UDP port" "7021")
 
   CFG_SMS_URL=$(ask   "SMS Gateway URL (blank to skip)")
   CFG_SMS_KEY=""
@@ -517,6 +539,21 @@ JT808_PORT=${CFG_JT808_PORT:-7018}
 # Device type ID to auto-register when an unknown IMEI first connects.
 JT808_DEVICE_TYPE_ID=1
 
+# ── GT06/Concox device configuration ─────────────────────────────────────────
+# GT06_HOST — GT06 host written into device setup SMS.
+#              Defaults to APP_DOMAIN when blank (config/sms.php).
+# GT06_PORT — GT06 TCP port written into the device setup SMS.
+GT06_HOST=${CFG_GT06_HOST:-}
+GT06_PORT=${CFG_GT06_PORT:-7019}
+
+# ── H02/Sinotrack device configuration ───────────────────────────────────────
+# H02_HOST      — H02 host written into device setup SMS.
+# H02_TCP_PORT  — H02 TCP port (persistent connections).
+# H02_UDP_PORT  — H02 UDP port (stateless connections).
+H02_HOST=${CFG_H02_HOST:-}
+H02_TCP_PORT=${CFG_H02_TCP_PORT:-7020}
+H02_UDP_PORT=${CFG_H02_UDP_PORT:-7021}
+
 # ── Optional / advanced ───────────────────────────────────────────────────────
 # GraphQL M2M bearer token (for server-to-server API calls)
 GRAPHQL_KEY=
@@ -638,6 +675,9 @@ scrape_configs:
               - cron
               - queue
               - jt808
+              - gt06
+              - h02-tcp
+              - h02-udp
 
     relabel_configs:
       - source_labels: ['__meta_docker_container_name']
@@ -668,7 +708,7 @@ generate_compose() {
 # Versions:  login=${TAD_SERVER_LOGIN_TAG}  admin=${TAD_SERVER_ADMIN_TAG}
 #            api=${TAD_SERVER_API_TAG}  graphql=${TAD_SERVER_GRAPHQL_TAG}
 #            tenant=${TAD_SERVER_TENANT_TAG}  web=${TAD_SERVER_WEB_TAG}
-#            jt808=${TAD_JT808_TAG}
+#            jt808=${TAD_JT808_TAG}  gt06=${TAD_GT06_TAG}  h02=${TAD_H02_TAG}
 
 x-app-base: &app-base
   networks: [tda]
@@ -852,6 +892,56 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+
+  gt06:
+    image: trackanydevice/server-gt06:${TAD_GT06_TAG}
+    container_name: gt06
+    ports: ["7019:7019"]
+    networks: [tda]
+    restart: unless-stopped
+    depends_on:
+      redis: {condition: service_started}
+    environment:
+      GT06_ADDR:      :7019
+      REDIS_HOST:     redis
+      REDIS_PORT:     6379
+      REDIS_DB:       1
+      STREAM_KEY:     gt06:telemetry
+      STREAM_MAX_LEN: "100000"
+      CMD_CHANNEL:    "gt06:cmd:"
+
+  h02-tcp:
+    image: trackanydevice/server-h02-tcp:${TAD_H02_TAG}
+    container_name: h02-tcp
+    ports: ["7020:7020"]
+    networks: [tda]
+    restart: unless-stopped
+    depends_on:
+      redis: {condition: service_started}
+    environment:
+      H02_ADDR:       :7020
+      REDIS_HOST:     redis
+      REDIS_PORT:     6379
+      REDIS_DB:       2
+      STREAM_KEY:     h02:telemetry
+      STREAM_MAX_LEN: "100000"
+      CMD_CHANNEL:    "h02:cmd:"
+
+  h02-udp:
+    image: trackanydevice/server-h02-udp:${TAD_H02_TAG}
+    container_name: h02-udp
+    ports: ["7021:7021/udp"]
+    networks: [tda]
+    restart: unless-stopped
+    depends_on:
+      redis: {condition: service_started}
+    environment:
+      H02_ADDR:       :7021
+      REDIS_HOST:     redis
+      REDIS_PORT:     6379
+      REDIS_DB:       2
+      STREAM_KEY:     h02:telemetry
+      STREAM_MAX_LEN: "100000"
 
   mysql:
     image: mysql:${MYSQL_VERSION}
@@ -1103,6 +1193,8 @@ show_status() {
   echo "  server-graphql:  ${TAD_SERVER_GRAPHQL_TAG}"
   echo "  server-tenant:   ${TAD_SERVER_TENANT_TAG}"
   echo "  jt808:           ${TAD_JT808_TAG}"
+  echo "  gt06:            ${TAD_GT06_TAG}"
+  echo "  h02:             ${TAD_H02_TAG}"
   echo "  web (CF Pages):  ${TAD_SERVER_WEB_TAG}  ← deployed via Cloudflare Pages"
   echo ""
   echo -e "${BOLD}── Access ──────────────────────────────────────────────────────${RESET}"
@@ -1113,11 +1205,17 @@ show_status() {
   echo ""
   local jt808_host="${JT808_HOST:-${APP_DOMAIN:-<your-domain>}}"
   local jt808_port="${JT808_PORT:-7018}"
-  echo -e "${BOLD}── JT808 GPS Tracker Endpoint ──────────────────────────────────${RESET}"
+  local gt06_host="${GT06_HOST:-${APP_DOMAIN:-<your-domain>}}"
+  local gt06_port="${GT06_PORT:-7019}"
+  local h02_host="${H02_HOST:-${APP_DOMAIN:-<your-domain>}}"
+  local h02_tcp_port="${H02_TCP_PORT:-7020}"
+  local h02_udp_port="${H02_UDP_PORT:-7021}"
+  echo -e "${BOLD}── Protocol Gateway Endpoints ──────────────────────────────────${RESET}"
   echo "  Device setup SMS tells trackers to connect to:"
-  echo "    JT808 host: ${jt808_host}"
-  echo "    JT808 port: ${jt808_port}  (TCP — written into the SMS body)"
-  echo "  Observability:           http://localhost:9090/metrics"
+  echo "    JT808 host: ${jt808_host}:${jt808_port}  (TCP)"
+  echo "    GT06  host: ${gt06_host}:${gt06_port}  (TCP)"
+  echo "    H02   host: ${h02_host}:${h02_tcp_port}(TCP) / ${h02_udp_port}(UDP)"
+  echo "  JT808 observability:     http://localhost:9090/metrics"
   echo ""
   echo -e "${BOLD}── OAuth clients (static, pre-seeded) ──────────────────────────${RESET}"
   echo "  Web portal:   ${WEB_CLIENT_ID}"
@@ -1176,7 +1274,7 @@ main() {
     echo "    1. Add Cloudflare Tunnel public hostnames (if not already done)"
     echo "    2. Open admin panel → approve your first tenant"
     echo "    3. Add tenant portals: edit docker-compose.yml, add a tenant_* block"
-    echo "    4. For GPS tracking: point JT808 devices to :7018"
+    echo "    4. For GPS tracking: JT808→:7018  GT06→:7019  H02→:7020(tcp)/:7021(udp)"
     echo ""
     echo "  Config saved to: ${INSTALL_DIR}/.env"
     echo "  Update later:    bash ${INSTALL_DIR}/install.sh --update"
