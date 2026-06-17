@@ -35,15 +35,15 @@
 #   deploy labels (traefik.swarm.network=traefik-net, tls=true, dual Host rules).
 #   This stack does NOT run its own Traefik and does NOT manage TLS certs.
 #
-# Topology (multi-node Swarm):
-#   • Run this on a Swarm MANAGER node. A fresh host is bootstrapped into a
-#     one-node swarm automatically.
-#   • The node you run on is labelled tad.storage=true and becomes the
-#     storage/control node. Stateful services (mysql, influxdb), the shared
-#     app_storage and the migration runner (cron) are pinned there.
+# Topology (deploys onto your EXISTING multi-node Swarm):
+#   • Your Swarm, your `traefik-net`, and your node labels must already exist —
+#     this script does NOT init a swarm, create networks, or label nodes.
+#   • Run it on a MANAGER node (so it can `docker stack deploy`).
+#   • Pinned services (mysql, influxdb, login, admin, cron) require ONE node
+#     labelled tad.storage=true — local bind volumes live there. Label it once:
+#       docker node update --label-add tad.storage=true <node>
 #   • Stateless services (api, graphql, queue, protocol servers, soketi …) run
 #     on any node and reach the database/redis over the overlay network.
-#   • Add worker nodes later with the `docker swarm join` command printed below.
 # ──────────────────────────────────────────────────────────────────────────────
 
 # Capture script path BEFORE set -u (undefined when piped via curl | bash).
@@ -237,58 +237,50 @@ check_prerequisites() {
 }
 
 # ── Ensure this host is a Swarm manager + labelled as storage node ────────────
-ensure_swarm() {
-  log "Checking Docker Swarm..."
+check_swarm() {
+  log "Verifying the Swarm (read-only — nothing is created or modified)..."
 
   if $DRY_RUN; then
-    echo "  [dry] Would ensure Swarm active + label local node tad.storage=true"
+    echo "  [dry] Would verify Swarm is active + on a manager (no init, no changes)"
     return 0
   fi
 
+  # We do NOT initialise a swarm — your cluster already exists. Just confirm
+  # this host is an active manager so `docker stack deploy` can run.
   local state
   state=$(docker info --format '{{.Swarm.LocalState}}' 2>/dev/null || echo "inactive")
-
   if [[ "$state" != "active" ]]; then
-    log "Initialising a new Swarm on this host..."
-    local init_args=()
-    [[ -n "${SWARM_ADVERTISE_ADDR:-}" ]] && init_args+=(--advertise-addr "${SWARM_ADVERTISE_ADDR}")
-    if ! docker swarm init "${init_args[@]}" &>/dev/null; then
-      err "docker swarm init failed."
-      err "On a host with multiple IPs, set the address to advertise and re-run:"
-      err "    SWARM_ADVERTISE_ADDR=<this-host-ip> bash tad.sh"
-      exit 1
-    fi
-    ok "Swarm initialised"
-  else
-    ok "Swarm already active"
-  fi
-
-  if [[ "$(docker info --format '{{.Swarm.ControlAvailable}}' 2>/dev/null)" != "true" ]]; then
-    err "This node is part of a Swarm but is NOT a manager. Run tad.sh on a manager node."
+    err "This host is not part of an active Swarm."
+    err "tad.sh only DEPLOYS onto an existing Swarm — it does not create one."
+    err "Run it on a node that has already joined your Swarm."
     exit 1
   fi
-
-  local node_id
-  node_id=$(docker node inspect self --format '{{.ID}}' 2>/dev/null || true)
-  if [[ -n "$node_id" ]]; then
-    docker node update --label-add tad.storage=true "$node_id" &>/dev/null \
-      && ok "Local node labelled tad.storage=true (storage/control node)"
+  if [[ "$(docker info --format '{{.Swarm.ControlAvailable}}' 2>/dev/null)" != "true" ]]; then
+    err "This node is a Swarm worker. Run tad.sh on a MANAGER node."
+    exit 1
   fi
+  ok "Swarm active (manager)"
 
-  # The external ingress network must exist before deploy (services join it and
-  # your Traefik routes over it). Create it if your Traefik stack hasn't yet.
+  # External ingress network is owned by your Traefik — check, never create.
   if docker network ls --format '{{.Name}}' 2>/dev/null | grep -qx "${TRAEFIK_NET}"; then
     ok "Ingress network '${TRAEFIK_NET}' present"
   else
-    docker network create --driver overlay --attachable "${TRAEFIK_NET}" &>/dev/null \
-      && ok "Created shared overlay network '${TRAEFIK_NET}' (attach your Traefik to it)" \
-      || warn "Could not create '${TRAEFIK_NET}' — create it before deploy: docker network create --driver overlay --attachable ${TRAEFIK_NET}"
+    warn "Network '${TRAEFIK_NET}' not found — your Traefik stack should provide it."
+    warn "  Create once if needed: docker network create --driver overlay --attachable ${TRAEFIK_NET}"
   fi
 
-  echo ""
-  dim "  To add worker nodes to this cluster, run on each worker:"
-  dim "    $(docker swarm join-token worker 2>/dev/null | grep 'docker swarm join' || echo 'docker swarm join --token <token> <manager-ip>:2377')"
-  echo ""
+  # Pinned services need ONE node labelled tad.storage=true. We do not set it.
+  local has_storage=""
+  while read -r _n; do
+    [[ "$(docker node inspect "$_n" --format '{{ index .Spec.Labels "tad.storage" }}' 2>/dev/null)" == "true" ]] \
+      && { has_storage=1; break; }
+  done < <(docker node ls -q 2>/dev/null)
+  if [[ -n "$has_storage" ]]; then
+    ok "Storage node label present (tad.storage=true)"
+  else
+    warn "No node is labelled tad.storage=true — mysql/influxdb/login/admin/cron will stay Pending."
+    warn "  Label your storage node once: docker node update --label-add tad.storage=true <node>"
+  fi
 }
 
 # ── Detect and load an existing .env ─────────────────────────────────────────
@@ -1257,7 +1249,7 @@ main() {
 
   check_prerequisites
   fetch_versions
-  ensure_swarm
+  check_swarm
 
   if $UPDATE_ONLY; then
     set -a; source "${ENV_FILE}" 2>/dev/null || true; set +a
