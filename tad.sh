@@ -229,10 +229,14 @@ check_prerequisites() {
   # Deployment uses Docker Swarm (docker stack deploy), built into the engine —
   # the standalone `docker compose` plugin is NOT required by this script.
 
-  # Ensure Docker can reach IPv6-only registries (e.g. quay.io) on IPv4 hosts.
-  if [[ -f /etc/gai.conf ]] && ! grep -q "^precedence ::ffff:0:0/96  100" /etc/gai.conf 2>/dev/null; then
-    echo "precedence ::ffff:0:0/96  100" >> /etc/gai.conf 2>/dev/null || true
-    ok "IPv4 preference set in /etc/gai.conf (fixes quay.io pull on IPv4-only hosts)"
+  # Optional: prefer IPv4 so Docker can reach IPv6-only registries (quay.io) on
+  # IPv4-only hosts. Needs root; skip silently (and report nothing) if we can't
+  # write it — it is only a pull optimisation, never required.
+  if [[ -f /etc/gai.conf && -w /etc/gai.conf ]] \
+     && ! grep -q "^precedence ::ffff:0:0/96  100" /etc/gai.conf 2>/dev/null; then
+    if printf 'precedence ::ffff:0:0/96  100\n' >> /etc/gai.conf 2>/dev/null; then
+      ok "IPv4 preference set in /etc/gai.conf (helps quay.io pulls on IPv4-only hosts)"
+    fi
   fi
 }
 
@@ -245,21 +249,21 @@ check_swarm() {
     return 0
   fi
 
-  # We do NOT initialise a swarm — your cluster already exists. Just confirm
-  # this host is an active manager so `docker stack deploy` can run.
-  local state
-  state=$(docker info --format '{{.Swarm.LocalState}}' 2>/dev/null || echo "inactive")
-  if [[ "$state" != "active" ]]; then
-    err "This host is not part of an active Swarm."
-    err "tad.sh only DEPLOYS onto an existing Swarm — it does not create one."
-    err "Run it on a node that has already joined your Swarm."
-    exit 1
+  # We do NOT initialise a swarm — your cluster already exists. These are
+  # advisory only: never fatal. `docker stack deploy` is the real authority.
+  local state ctrl
+  state=$(docker info --format '{{.Swarm.LocalState}}' 2>/dev/null || echo "unknown")
+  ctrl=$(docker info --format '{{.Swarm.ControlAvailable}}' 2>/dev/null || echo "")
+  if [[ "$state" == "active" && "$ctrl" == "true" ]]; then
+    ok "Swarm active (manager)"
+  elif [[ "$state" == "active" ]]; then
+    warn "This node is a Swarm worker — 'docker stack deploy' must run on a MANAGER. Continuing."
+  else
+    warn "Swarm state reported as '${state}', not 'active'."
+    warn "  If your Swarm IS up, this user likely can't reach the Docker daemon — try: sudo bash tad.sh"
+    warn "  (the /etc/gai.conf permission error above is the same root cause: not running as root)."
+    warn "  Continuing — 'docker stack deploy' will give the authoritative error if anything's wrong."
   fi
-  if [[ "$(docker info --format '{{.Swarm.ControlAvailable}}' 2>/dev/null)" != "true" ]]; then
-    err "This node is a Swarm worker. Run tad.sh on a MANAGER node."
-    exit 1
-  fi
-  ok "Swarm active (manager)"
 
   # External ingress network is owned by your Traefik — check, never create.
   if docker network ls --format '{{.Name}}' 2>/dev/null | grep -qx "${TRAEFIK_NET}"; then
