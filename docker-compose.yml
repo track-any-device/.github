@@ -19,10 +19,7 @@
 #
 #   Service                Image                                    Latest tag
 #   ─────────────────────  ───────────────────────────────────────  ──────────────────────
-#   server-login           trackanydevice/server-login              v0.4.3
-#   server-admin           trackanydevice/server-admin              v0.0.9
 #   server-api             trackanydevice/server-api                v0.1.424-ac19c5e0
-#   server-graphql         trackanydevice/server-graphql            v0.0.7
 #   server-tenant          trackanydevice/server-tenant             (see below)
 #   server-cron            trackanydevice/server-cron               (same as server-api)
 #   server-queue           trackanydevice/server-queue              (same as server-api)
@@ -32,11 +29,8 @@
 #   Third-party images are pinned below — upgrade intentionally, never blindly.
 #
 # Service map:
-#   login     → login.track-any-device.com       SSO identity provider
-#   admin     → admin.track-any-device.com       Filament admin panel
-#   api       → api.track-any-device.com         Central REST API server
-#   graphql   → graphql.track-any-device.com     GraphQL API + Explorer
-#   web       → track-any-device.com             Marketing site + "my" portal
+#   api       → api.track-any-device.com         Central REST API server (Sanctum SMS-OTP auth)
+#   web       → track-any-device.com             Marketing site + "my" portal + admin UI
 #   jt808     → :7018 TCP                        JT808 GPS tracker endpoint
 #   soketi    → :6001 WS                         Real-time WebSocket server
 #   mysql     → :3306                            Central database
@@ -64,9 +58,6 @@ x-app-environment: &app-environment
   TRUSTED_PROXIES: "*"
   SESSION_DOMAIN:  ${SESSION_DOMAIN:-.track-any-device.com}
   APP_DOMAIN:      ${APP_DOMAIN:-track-any-device.com}
-  LOGIN_DOMAIN:    ${LOGIN_DOMAIN:-login.track-any-device.com}
-  ADMIN_DOMAIN:    ${ADMIN_DOMAIN:-admin.track-any-device.com}
-  GRAPHQL_DOMAIN:  ${GRAPHQL_DOMAIN:-graphql.track-any-device.com}
   MY_DOMAIN:       ${MY_DOMAIN:-track-any-device.com}
   DB_CONNECTION: mysql
   DB_HOST:       mysql
@@ -101,36 +92,7 @@ x-app-environment: &app-environment
 
 services:
 
-  # ── SSO Identity Provider ────────────────────────────────────────────────────
-  login:
-    <<: *app-base
-    image: trackanydevice/server-login:v0.4.3
-    container_name: login
-    volumes:
-      - app_storage:/app/storage/app
-    environment:
-      <<: *app-environment
-      APP_URL:        https://${LOGIN_DOMAIN}
-      APP_KEY:        ${LOGIN_APP_KEY}
-      SESSION_COOKIE: login_session
-      SMS_MASTER_NUMBER:   ${SMS_MASTER_NUMBER}
-      SMS_GATEWAY_URL:     ${SMS_GATEWAY_URL}
-      SMS_GATEWAY_API_KEY: ${SMS_GATEWAY_API_KEY}
-
-  # ── Filament Admin Panel ─────────────────────────────────────────────────────
-  admin:
-    <<: *app-base
-    image: trackanydevice/server-admin:v0.0.9
-    container_name: admin
-    volumes:
-      - app_storage:/app/storage/app
-    environment:
-      <<: *app-environment
-      APP_URL:        https://${ADMIN_DOMAIN}
-      APP_KEY:        ${ADMIN_APP_KEY}
-      SESSION_COOKIE: admin_session
-
-  # ── Central REST API Server ──────────────────────────────────────────────────
+  # ── Central REST API Server (Sanctum SMS-OTP auth) ───────────────────────────
   api:
     <<: *app-base
     image: trackanydevice/server-api:v0.1.424-ac19c5e0
@@ -139,19 +101,9 @@ services:
       <<: *app-environment
       APP_URL: https://api.${APP_DOMAIN}
       APP_KEY: ${API_APP_KEY}
-
-  # ── GraphQL API ──────────────────────────────────────────────────────────────
-  graphql:
-    <<: *app-base
-    image: trackanydevice/server-graphql:v0.0.7
-    container_name: graphql
-    environment:
-      <<: *app-environment
-      APP_URL:        https://${GRAPHQL_DOMAIN}
-      APP_KEY:        ${GRAPHQL_APP_KEY}
-      SESSION_COOKIE: graphql_session
-      GRAPHQL_KEY:    ${GRAPHQL_KEY}
-      GRAPHQL_SECRET: ${GRAPHQL_SECRET}
+      SMS_MASTER_NUMBER:   ${SMS_MASTER_NUMBER}
+      SMS_GATEWAY_URL:     ${SMS_GATEWAY_URL}
+      SMS_GATEWAY_API_KEY: ${SMS_GATEWAY_API_KEY}
 
   # ── Next.js Website + "My" User Portal ──────────────────────────────────────
   # Deployed to Cloudflare Pages — NOT a Docker service.
@@ -248,13 +200,9 @@ services:
   #     APP_URL: https://acme.track-any-device.com
   #     APP_SURFACE: tenant
   #     APP_TENANT_SLUG: acme
-  #     APP_TENANT_ID: <from admin panel>
+  #     APP_TENANT_ID: <tenant id>
   #     APP_TENANT_API_KEY: <from Portal API Keys tab>
-  #     SSO_CLIENT_ID: <from admin panel>
-  #     SSO_CLIENT_SECRET: <from admin panel>
-  #     SSO_REDIRECT_URI: https://acme.track-any-device.com/sso/callback
   #     PLATFORM_API_URL: http://api
-  #     PLATFORM_SSO_URL: https://login.track-any-device.com
   #     DB_CONNECTION: mysql
   #     DB_HOST: mysql
   #     DB_DATABASE: ${MYSQL_DATABASE}
@@ -448,4 +396,3 @@ volumes:
   influxdb_data:
   loki_data:
   grafana_data:
-  app_storage:    # shared storage between login and admin (logos, oauth keys)

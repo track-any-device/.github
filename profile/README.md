@@ -23,6 +23,7 @@ Track Any Device is a SaaS fleet tracking platform for organisations that need t
 
 - **Multi-protocol device support** — JT/T 808-2019 TCP, GT06/Concox binary TCP, H02/Sinotrack ASCII TCP+UDP, TAD-101 WebSocket, SMS fallback. One platform, any GPS hardware.
 - **Multi-tenant architecture** — each organisation gets an isolated subdomain portal (`{slug}.track-any-device.com`) with full data separation at the query layer.
+- **First-party auth** — phone-number sign-in with Sanctum SMS-OTP. No external SSO/OAuth identity provider.
 - **Real-time tracking** — live map, device location streams, SOS alerts, geofence violations — all pushed via WebSocket.
 - **Beat geo-fencing** — define patrol zones (polygons or circles), assign devices, and detect violations automatically.
 - **Workflow automation** — JSON-driven automation graphs triggered by incidents or time schedules. Actions include notifications, device commands, escalation, and webhooks.
@@ -36,24 +37,26 @@ Track Any Device is a SaaS fleet tracking platform for organisations that need t
 ```
                         ┌─────────────────────────────────────────────────┐
                         │               track-any-device.com               │
-                        │  Next.js 15 — marketing site + "my" user portal  │
-                        └──────────────┬──────────────────────┬────────────┘
-                                       │ REST API              │ GraphQL
-                        ┌──────────────▼──────────┐  ┌────────▼────────────┐
-                        │  app  (API brain)        │  │  server-graphql      │
-                        │  Laravel 13              │  │  Lighthouse          │
-                        │  queue · cron · cli      │  │  public content +    │
-                        │  REST: mobile, my, tenant│  │  central staff       │
-                        └──────────────────────────┘  └─────────────────────┘
-                                       │ packages
-         ┌─────────────────────────────┼────────────────────────────────────┐
-         │                             │                                     │
-┌────────▼──────────┐      ┌───────────▼────────────┐         ┌─────────────▼──────┐
-│  server-tenant    │      │  server-login           │         │  server-admin       │
-│  Laravel 13       │      │  SSO identity provider  │         │  Filament v4        │
-│  Inertia + React  │      │  Laravel Passport        │         │  central staff      │
-│  {slug}.tad.com   │      │  login.tad.com           │         │  admin.tad.com      │
-└───────────────────┘      └─────────────────────────┘         └────────────────────┘
+                        │  web — Next.js 15                                 │
+                        │  marketing site + "my" user portal + /admin      │
+                        └──────────────────────┬──────────────────────────┘
+                                               │ REST API
+                                ┌──────────────▼──────────────┐
+                                │  app  (API brain)            │
+                                │  Laravel 13                  │
+                                │  queue · cron · cli          │
+                                │  REST: mobile, my, tenant    │
+                                │  auth: Sanctum SMS-OTP       │
+                                └──────────────┬───────────────┘
+                                               │ packages
+         ┌─────────────────────────────────────┼────────────────────────────┐
+         │                                      │                            │
+┌────────▼──────────┐                 (consumed by every server app via Composer)
+│  server-tenant    │
+│  Laravel 13       │
+│  Inertia + React  │
+│  {slug}.tad.com   │
+└───────────────────┘
 
   ┌──────────────────────────────────────────────────────────────────────────────────┐
   │  Protocol Gateway — Go 1.23 TCP/UDP servers → Redis Streams → Laravel consumers  │
@@ -70,6 +73,10 @@ Track Any Device is a SaaS fleet tracking platform for organisations that need t
          └─────────────────────────────────────────────────────────────────┘
 ```
 
+Central admin is **not** a separate app — it ships as the `/admin` area of `web`. There is no
+SSO identity provider and no GraphQL API: the only API surface is `app`'s REST endpoints,
+and authentication is first-party Sanctum SMS-OTP.
+
 ---
 
 ## Repositories
@@ -85,10 +92,7 @@ Track Any Device is a SaaS fleet tracking platform for organisations that need t
 | [package-h02](https://github.com/track-any-device/package-h02) | `track-any-device/h02` | H02/Sinotrack stream consumer (TCP + UDP) |
 | [package-tad101](https://github.com/track-any-device/package-tad101) | `track-any-device/tad101` | TAD-101 WebSocket device protocol |
 | [package-sms-gateway](https://github.com/track-any-device/package-sms-gateway) | `track-any-device/sms-gateway` | SMS HTTP gateway client |
-| [package-sso-server](https://github.com/track-any-device/package-sso-server) | `track-any-device/sso-server` | OAuth2 identity provider (Laravel Passport) |
-| [package-sso-client](https://github.com/track-any-device/package-sso-client) | `track-any-device/sso-client` | OAuth2 consumer — SSO callback and session bridge (Socialite) |
 | [package-mcp](https://github.com/track-any-device/package-mcp) | `track-any-device/mcp` | MCP server — exposes fleet data to AI assistants |
-| [package-admin](https://github.com/track-any-device/package-admin) | `track-any-device/admin` | Filament v4 admin resources, pages, and widgets |
 
 ### Frontend Package — published to [npm](https://www.npmjs.com/package/@trackany-device/components)
 
@@ -100,16 +104,35 @@ Track Any Device is a SaaS fleet tracking platform for organisations that need t
 
 | Repository | Image | Purpose |
 |---|---|---|
-| [app](https://github.com/track-any-device/app) | `server-api` · `server-queue` · `server-cron` · `server-cli` | Pure API server — REST (mobile, my portal, tenant portal), queue, scheduler, CLI. No Inertia pages. |
+| [app](https://github.com/track-any-device/app) | `server-api` · `server-queue` · `server-cron` · `server-cli` | Pure API server — REST (mobile, my portal, tenant portal), queue, scheduler, CLI. First-party Sanctum SMS-OTP auth. No Inertia pages. |
 | [server-tenant](https://github.com/track-any-device/server-tenant) | `server-tenant` | Tenant operational portal — live map, incidents, beats, workflows |
-| [server-login](https://github.com/track-any-device/server-login) | `server-login` | SSO identity provider — Fortify auth + OAuth2 authorization server |
-| [server-admin](https://github.com/track-any-device/server-admin) | `server-admin` | Central admin panel (Filament v4) |
-| [server-graphql](https://github.com/track-any-device/server-graphql) | `server-graphql` | GraphQL API — public content and central staff queries |
 | [server-jt808](https://github.com/track-any-device/server-jt808) | `server-jt808` | Go TCP server for JT/T 808-2019 GPS devices |
 | [server-gt06](https://github.com/track-any-device/server-gt06) | `server-gt06` | Go TCP server for GT06/Concox binary GPS devices |
 | [server-h02](https://github.com/track-any-device/server-h02) | `server-h02-tcp` · `server-h02-udp` | Go TCP+UDP server for H02/Sinotrack ASCII GPS devices |
-| [web](https://github.com/track-any-device/web) | `server-web` | Next.js 15 — marketing site and authenticated "my" user portal |
+| [web](https://github.com/track-any-device/web) | `server-web` | Next.js 15 — marketing site, authenticated "my" user portal, and central `/admin` |
 | [mobile-app](https://github.com/track-any-device/mobile-app) | — | React Native / Expo — iOS and Android apps |
+
+---
+
+## Self-hosting
+
+This repository carries the self-host install tooling. There are two deploy paths, both pulling
+the same Docker images from Docker Hub:
+
+| Path | File | Ingress | Device TCP/UDP |
+|---|---|---|---|
+| Single-host (Docker Compose) | `install.sh` → generated `docker-compose.yml` | Cloudflare Tunnel (`cloudflared`) | relayed via `frpc` (`frp` profile) |
+| Docker Swarm | `tad.sh` → `tad.yml` | your own Traefik (`traefik-net`) | published **directly** on host ports — no relay |
+
+On Swarm the protocol servers publish their ports in host mode, preserving the device source IP:
+JT808 `7018/tcp`, GT06 `7019/tcp`, H02 `7020/tcp` and `7021/udp`. Open those ports in the
+host/cloud firewall; trackers connect straight to a node IP.
+
+The committed `docker-compose.yml` is a reference single-host stack and declares only `jt808`
+among the Go protocol servers; `install.sh` regenerates a full `docker-compose.yml` with
+`jt808`, `gt06`, `h02-tcp` and `h02-udp`. Both paths run `api`, `cron`, `queue`, `cli`, plus
+infra (`mysql`, `redis`, `soketi`, `influxdb`, mail, `pma`); logging (`loki`/`promtail`/`grafana`)
+and `frpc` are profile-gated.
 
 ---
 
@@ -133,14 +156,8 @@ package-sms-gateway
        ├─ package-gt06
        ├─ package-h02
        ├─ package-tad101
-       ├─ package-sso-server
-       ├─ package-sso-client
-       ├─ package-mcp
-       └─ package-admin
+       └─ package-mcp
 ui-kit                          (parallel with packages — independent)
-  └─ server-login
-  └─ server-graphql
-  └─ server-admin
   └─ server-jt808
   └─ server-gt06
   └─ server-h02
@@ -161,14 +178,12 @@ Models, migrations, and seeders live exclusively in `track-any-device/core`. No 
 ```
 sms-gateway ──────────────────────────────────────► core
                                                       │
-          ┌──────────────┬──────────┬────────────────┬┴──────────────┬──────────────┐
-          │              │          │                │               │              │
-       drivers         jt808      gt06             h02           tad101     sso-server/sso-client
-                                                                                   │
-                                                                               server-login
-                                                                               server-tenant
-                                                                               server-graphql
-                                                                                   app
+          ┌──────────────┬──────────┬────────────────┼──────────────┬──────────────┐
+          │              │          │                │              │              │
+       drivers         jt808      gt06             h02           tad101           mcp
+                                                                    │
+                                                              server-tenant
+                                                                   app
 ```
 
 ---
