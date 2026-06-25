@@ -3,8 +3,7 @@
 # Deploy with:  set -a; source .env.tad; set +a; docker stack deploy -c tad.yml tad
 # Generated: 2026-06-17T08:03:15Z
 #
-# Versions:  login=v0.4.3  admin=v0.0.9
-#            api=v0.1.424-ac19c5e0  graphql=v0.0.7
+# Versions:  api=v0.1.424-ac19c5e0
 #            jt808=0.1.1  gt06=0.1.1  h02=0.1.1
 
 x-deploy-any: &deploy-any
@@ -38,9 +37,6 @@ x-app-env: &app-env
   TRUSTED_PROXIES: "*"
   SESSION_DOMAIN:  ${SESSION_DOMAIN:-.track-any-device.com}
   APP_DOMAIN:      ${APP_DOMAIN}
-  LOGIN_DOMAIN:    ${LOGIN_DOMAIN}
-  ADMIN_DOMAIN:    ${ADMIN_DOMAIN}
-  GRAPHQL_DOMAIN:  ${GRAPHQL_DOMAIN}
   DB_CONNECTION: mysql
   DB_HOST:       mysql
   DB_PORT:       3306
@@ -77,55 +73,6 @@ x-app-env: &app-env
 
 services:
 
-  # ── SSO Identity Provider ────────────────────────────────────────────────────
-  login:
-    image: trackanydevice/server-login:latest
-    networks: [tad, traefik-net]
-    volumes:
-      - /mnt/hosting/tad/track-any-device/volumes/app_storage:/app/storage/app
-    environment:
-      <<: *app-env
-      APP_SURFACE: login
-      APP_URL: https://${LOGIN_DOMAIN}
-      APP_KEY: ${LOGIN_APP_KEY}
-      SESSION_COOKIE: login_session
-    deploy:
-      <<: *deploy-storage
-      resources: *res-app
-      labels:
-        - "traefik.enable=true"
-        - "traefik.swarm.network=traefik-net"
-        - "traefik.http.services.tad-login.loadbalancer.server.port=80"
-        - "traefik.http.routers.tad-login.rule=Host(`login-tad.${SWARM_HOST_DOMAIN}`) || Host(`${LOGIN_DOMAIN}`)"
-        - "traefik.http.routers.tad-login.entrypoints=websecure"
-        - "traefik.http.routers.tad-login.tls=true"
-        - "traefik.http.routers.tad-login.service=tad-login"
-
-  # ── Filament Admin Panel ─────────────────────────────────────────────────────
-  admin:
-    image: trackanydevice/server-admin:latest
-    networks: [tad, traefik-net]
-    volumes:
-      - /mnt/hosting/tad/track-any-device/volumes/app_storage:/app/storage/app
-    environment:
-      <<: *app-env
-      APP_SURFACE: admin
-      APP_URL: https://${ADMIN_DOMAIN}
-      APP_KEY: ${ADMIN_APP_KEY}
-      SESSION_COOKIE: admin_session
-      SSO_SERVER_URL: https://${LOGIN_DOMAIN}
-    deploy:
-      <<: *deploy-storage
-      resources: *res-app
-      labels:
-        - "traefik.enable=true"
-        - "traefik.swarm.network=traefik-net"
-        - "traefik.http.services.tad-admin.loadbalancer.server.port=80"
-        - "traefik.http.routers.tad-admin.rule=Host(`admin-tad.${SWARM_HOST_DOMAIN}`) || Host(`${ADMIN_DOMAIN}`)"
-        - "traefik.http.routers.tad-admin.entrypoints=websecure"
-        - "traefik.http.routers.tad-admin.tls=true"
-        - "traefik.http.routers.tad-admin.service=tad-admin"
-
   # ── Central REST API Server ──────────────────────────────────────────────────
   api:
     image: trackanydevice/server-api:latest
@@ -135,7 +82,6 @@ services:
       APP_SURFACE: api
       APP_URL: https://api.${APP_DOMAIN}
       APP_KEY: ${API_APP_KEY}
-      SSO_SERVER_URL: https://${LOGIN_DOMAIN}
       LOG_CHANNEL: stderr
       JT808_HOST: ${JT808_HOST:-}
       JT808_PORT: ${JT808_PORT:-7018}
@@ -155,31 +101,6 @@ services:
         - "traefik.http.routers.tad-api.entrypoints=websecure"
         - "traefik.http.routers.tad-api.tls=true"
         - "traefik.http.routers.tad-api.service=tad-api"
-
-  # ── GraphQL API ──────────────────────────────────────────────────────────────
-  graphql:
-    image: trackanydevice/server-graphql:latest
-    networks: [tad, traefik-net]
-    environment:
-      <<: *app-env
-      APP_SURFACE: graphql
-      APP_URL: https://${GRAPHQL_DOMAIN}
-      APP_KEY: ${GRAPHQL_APP_KEY}
-      SESSION_COOKIE: graphql_session
-      SSO_SERVER_URL: https://${LOGIN_DOMAIN}
-      GRAPHQL_KEY:    ${GRAPHQL_KEY:-}
-      GRAPHQL_SECRET: ${GRAPHQL_SECRET:-}
-    deploy:
-      <<: *deploy-any
-      resources: *res-app
-      labels:
-        - "traefik.enable=true"
-        - "traefik.swarm.network=traefik-net"
-        - "traefik.http.services.tad-graphql.loadbalancer.server.port=80"
-        - "traefik.http.routers.tad-graphql.rule=Host(`graphql-tad.${SWARM_HOST_DOMAIN}`) || Host(`${GRAPHQL_DOMAIN}`)"
-        - "traefik.http.routers.tad-graphql.entrypoints=websecure"
-        - "traefik.http.routers.tad-graphql.tls=true"
-        - "traefik.http.routers.tad-graphql.service=tad-graphql"
 
   # ── Scheduler (also the migration runner — pinned to storage node) ───────────
   cron:
@@ -231,7 +152,7 @@ services:
       <<: *deploy-any
       resources: *res-worker
 
-  # ── JT808 GPS TCP Server (published via frp; host-mode port for source IP) ───
+  # ── JT808 GPS TCP Server (direct host-mode port — preserves device source IP) ─
   jt808:
     image: trackanydevice/jt808-server:latest
     networks: [tad]
@@ -437,22 +358,6 @@ services:
     deploy:
       <<: *deploy-any
       resources: *res-small
-
-  # ── frp tunnel — publishes JT808 TCP through a public frps server ────────────
-  frpc:
-    image: snowdreamtech/frpc:0.61.1
-    networks: [tad]
-    configs:
-      - source: frpc_toml
-        target: /etc/frp/frpc.toml
-    deploy:
-      <<: *deploy-any
-      resources: *res-small
-
-configs:
-  frpc_toml:
-    file: /mnt/hosting/tad/track-any-device/frpc.toml
-    name: tad_frpc_fb3b1537
 
 networks:
   tad:

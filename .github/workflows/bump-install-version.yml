@@ -10,9 +10,16 @@ on:
   workflow_dispatch:
     inputs:
       service:
-        description: 'Service key in install.sh (e.g. TAD_SERVER_LOGIN_TAG)'
+        description: 'Service key in install.sh (TAD_SERVER_API_TAG, TAD_SERVER_TENANT_TAG, TAD_SERVER_WEB_TAG, TAD_JT808_TAG, TAD_GT06_TAG, TAD_H02_TAG)'
         required: true
-        type: string
+        type: choice
+        options:
+          - TAD_SERVER_API_TAG
+          - TAD_SERVER_TENANT_TAG
+          - TAD_SERVER_WEB_TAG
+          - TAD_JT808_TAG
+          - TAD_GT06_TAG
+          - TAD_H02_TAG
       version:
         description: 'New version tag (e.g. v0.4.4)'
         required: true
@@ -40,6 +47,15 @@ jobs:
           SERVICE: ${{ inputs.service }}
           VERSION: ${{ inputs.version }}
         run: |
+          # Retired services — SSO login, Filament admin, and GraphQL were
+          # removed from the platform. Reject any attempt to bump them.
+          case "${SERVICE}" in
+            TAD_SERVER_LOGIN_TAG|TAD_SERVER_ADMIN_TAG|TAD_SERVER_GRAPHQL_TAG)
+              echo "::error::${SERVICE} is retired and no longer exists in install.sh"
+              exit 1
+              ;;
+          esac
+
           if ! grep -q "${SERVICE}=" install.sh; then
             echo "::error::${SERVICE} not found in install.sh"
             exit 1

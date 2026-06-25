@@ -26,23 +26,26 @@
 #         tad.sh        (this script, persisted for --update)
 #         tad.yml       (generated Swarm stack file)
 #         .env.tad      (this stack's environment — never plain .env)
-#         frpc.toml     (frp client config)
 #         volumes/{mysql,influxdb,app_storage}   (local bind mounts)
 #
 # Ingress:
-#   HTTP services (login, admin, api, graphql, soketi) are routed by your
-#   EXISTING Traefik instance over the external `traefik-net` overlay, using
-#   deploy labels (traefik.swarm.network=traefik-net, tls=true, dual Host rules).
+#   HTTP services (api, soketi) are routed by your EXISTING Traefik instance
+#   over the external `traefik-net` overlay, using deploy labels
+#   (traefik.swarm.network=traefik-net, tls=true, dual Host rules).
 #   This stack does NOT run its own Traefik and does NOT manage TLS certs.
+#
+#   Device protocol servers (jt808/gt06/h02) are published DIRECTLY as Swarm
+#   ports on the host — no frp/Cloudflare tunnel or relay. Open the matching
+#   TCP/UDP ports in your firewall (see Step 3/4 below).
 #
 # Topology (deploys onto your EXISTING multi-node Swarm):
 #   • Your Swarm, your `traefik-net`, and your node labels must already exist —
 #     this script does NOT init a swarm, create networks, or label nodes.
 #   • Run it on a MANAGER node (so it can `docker stack deploy`).
-#   • Pinned services (mysql, influxdb, login, admin, cron) require ONE node
+#   • Pinned services (mysql, influxdb, cron) require ONE node
 #     labelled tad.storage=true — local bind volumes live there. Label it once:
 #       docker node update --label-add tad.storage=true <node>
-#   • Stateless services (api, graphql, queue, protocol servers, soketi …) run
+#   • Stateless services (api, queue, protocol servers, soketi …) run
 #     on any node and reach the database/redis over the overlay network.
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -55,10 +58,7 @@ set -euo pipefail
 # The script fetches real latest release tags from GitHub at runtime; these are
 # only used when GitHub is unreachable.
 # VERSIONS_START
-TAD_SERVER_LOGIN_TAG="v0.4.3"
-TAD_SERVER_ADMIN_TAG="v0.0.9"
 TAD_SERVER_API_TAG="v0.1.424-ac19c5e0"
-TAD_SERVER_GRAPHQL_TAG="v0.0.7"
 TAD_SERVER_TENANT_TAG="latest"
 TAD_SERVER_WEB_TAG="latest"
 TAD_JT808_TAG="0.1.1"
@@ -73,20 +73,10 @@ SOKETI_VERSION="1.4-16-alpine"
 INFLUXDB_VERSION="2.7-alpine"
 MAILPIT_VERSION="v1.24.0"
 PMA_VERSION="5.2.2"
-FRPC_VERSION="0.61.1"
 # Note: TLS/ingress is handled by your EXISTING Traefik on the external
 # `traefik-net` overlay — this stack does NOT ship its own Traefik.
+# Device protocol ports are published directly by Swarm — no frp/tunnel relay.
 
-# ── Static OAuth client credentials (seeded automatically by db:seed) ─────────
-WEB_CLIENT_ID="tad_web_portal"
-WEB_CLIENT_SECRET="tad_web_portal_secret"
-MY_CLIENT_ID="tad_my_portal"
-MY_CLIENT_SECRET="tad_my_portal_secret"
-ADMIN_CLIENT_ID="tad_admin_panel"
-ADMIN_CLIENT_SECRET="tad_admin_panel_secret"
-GRAPHQL_CLIENT_ID="tad_graphql_api"
-GRAPHQL_CLIENT_SECRET="tad_graphql_api_secret"
-MOBILE_CLIENT_ID="tad_mobile_tad101"   # PKCE — no secret
 
 # ── Config ────────────────────────────────────────────────────────────────────
 # Default install dir is a `track-any-device/` folder under the CURRENT directory,
@@ -99,7 +89,6 @@ TRAEFIK_NET="traefik-net"   # EXTERNAL overlay your Traefik lives on (HTTP ingre
 DRY_RUN=false
 UPDATE_ONLY=false
 HAVE_EXISTING_ENV=false
-FRPC_CONFIG_VERSION="init"  # content hash of frpc.toml, set by write_frpc_config
 
 # ── Colours ───────────────────────────────────────────────────────────────────
 BOLD="\033[1m"; RESET="\033[0m"
@@ -131,7 +120,6 @@ esac
 
 STACK_FILE="${INSTALL_DIR}/tad.yml"
 ENV_FILE="${INSTALL_DIR}/.env.tad"
-FRPC_FILE="${INSTALL_DIR}/frpc.toml"
 
 # ── Dynamic version resolution ────────────────────────────────────────────────
 _gh_latest() {
@@ -146,22 +134,16 @@ _gh_latest() {
 
 fetch_versions() {
   log "Fetching latest release versions from GitHub..."
-  local login admin api graphql tenant web jt808 gt06 h02
+  local api tenant web jt808 gt06 h02
 
-  login=$(  _gh_latest "server-login")
-  admin=$(   _gh_latest "server-admin")
   api=$(     _gh_latest "app")
-  graphql=$( _gh_latest "server-graphql")
   tenant=$(  _gh_latest "server-tenant")
   web=$(     _gh_latest "web")
   jt808=$(   _gh_latest "server-jt808")
   gt06=$(    _gh_latest "server-gt06")
   h02=$(     _gh_latest "server-h02")
 
-  [[ -n "$login"   ]] && TAD_SERVER_LOGIN_TAG="$login"     || warn "server-login:   using fallback ${TAD_SERVER_LOGIN_TAG}"
-  [[ -n "$admin"   ]] && TAD_SERVER_ADMIN_TAG="$admin"     || warn "server-admin:   using fallback ${TAD_SERVER_ADMIN_TAG}"
   [[ -n "$api"     ]] && TAD_SERVER_API_TAG="$api"         || warn "server-api:     using fallback ${TAD_SERVER_API_TAG}"
-  [[ -n "$graphql" ]] && TAD_SERVER_GRAPHQL_TAG="$graphql" || warn "server-graphql: using fallback ${TAD_SERVER_GRAPHQL_TAG}"
   [[ -n "$tenant"  ]] && TAD_SERVER_TENANT_TAG="$tenant"
   [[ -n "$web"     ]] && TAD_SERVER_WEB_TAG="$web"
   [[ -n "$jt808"   ]] && TAD_JT808_TAG="$jt808"
@@ -170,10 +152,7 @@ fetch_versions() {
 
   echo ""
   echo -e "${BOLD}── Resolved versions ───────────────────────────────────────────${RESET}"
-  printf "  %-18s %s\n" "server-login:"    "${TAD_SERVER_LOGIN_TAG}"
-  printf "  %-18s %s\n" "server-admin:"    "${TAD_SERVER_ADMIN_TAG}"
   printf "  %-18s %s\n" "server-api:"      "${TAD_SERVER_API_TAG}"
-  printf "  %-18s %s\n" "server-graphql:"  "${TAD_SERVER_GRAPHQL_TAG}"
   printf "  %-18s %s\n" "jt808-server:"    "${TAD_JT808_TAG}"
   printf "  %-18s %s\n" "gt06-server:"     "${TAD_GT06_TAG}"
   printf "  %-18s %s\n" "h02-server:"      "${TAD_H02_TAG}"
@@ -282,7 +261,7 @@ check_swarm() {
   if [[ -n "$has_storage" ]]; then
     ok "Storage node label present (tad.storage=true)"
   else
-    warn "No node is labelled tad.storage=true — mysql/influxdb/login/admin/cron will stay Pending."
+    warn "No node is labelled tad.storage=true — mysql/influxdb/cron will stay Pending."
     warn "  Label your storage node once: docker node update --label-add tad.storage=true <node>"
   fi
 }
@@ -297,17 +276,11 @@ detect_existing_env() {
 
   CFG_DOMAIN="${APP_DOMAIN:-}"
   CFG_SCHEME="https"
-  CFG_LOGIN_DOMAIN="${LOGIN_DOMAIN:-login.${CFG_DOMAIN}}"
-  CFG_ADMIN_DOMAIN="${ADMIN_DOMAIN:-admin.${CFG_DOMAIN}}"
-  CFG_GRAPHQL_DOMAIN="${GRAPHQL_DOMAIN:-graphql.${CFG_DOMAIN}}"
   CFG_MYSQL_DB="${MYSQL_DATABASE:-tad}"
   CFG_MYSQL_USER="${MYSQL_USER:-tad}"
   CFG_MYSQL_ROOT_PASS="${MYSQL_ROOT_PASSWORD:-}"
   CFG_MYSQL_PASS="${MYSQL_PASSWORD:-}"
   CFG_SWARM_HOST_DOMAIN="${SWARM_HOST_DOMAIN:-host-swarm.net}"
-  CFG_FRP_SERVER_ADDR="${FRP_SERVER_ADDR:-}"
-  CFG_FRP_SERVER_PORT="${FRP_SERVER_PORT:-7000}"
-  CFG_FRP_TOKEN="${FRP_TOKEN:-change-me}"
   CFG_JT808_HOST="${JT808_HOST:-}"
   CFG_JT808_PORT="${JT808_PORT:-7018}"
   CFG_GT06_HOST="${GT06_HOST:-}"
@@ -318,10 +291,7 @@ detect_existing_env() {
   CFG_SMS_URL="${SMS_GATEWAY_URL:-}"
   CFG_SMS_KEY="${SMS_GATEWAY_API_KEY:-}"
   CFG_SMS_NUMBER="${SMS_MASTER_NUMBER:-}"
-  CFG_LOGIN_KEY="${LOGIN_APP_KEY:-}"
-  CFG_ADMIN_KEY="${ADMIN_APP_KEY:-}"
   CFG_API_KEY="${API_APP_KEY:-}"
-  CFG_GRAPHQL_KEY="${GRAPHQL_APP_KEY:-}"
   CFG_PUSHER_ID="${PUSHER_APP_ID:-}"
   CFG_PUSHER_KEY="${PUSHER_APP_KEY:-}"
   CFG_PUSHER_SECRET="${PUSHER_APP_SECRET:-}"
@@ -343,20 +313,14 @@ collect_config() {
     echo "  Domain:      ${CFG_DOMAIN}"
     echo "  Swarm host:  *-tad.${CFG_SWARM_HOST_DOMAIN:-host-swarm.net}"
     echo "  Database:    ${CFG_MYSQL_USER}@mysql/${CFG_MYSQL_DB}"
-    echo "  frp server:  ${CFG_FRP_SERVER_ADDR:-(not configured)}:${CFG_FRP_SERVER_PORT:-7000}"
     echo "  SMS URL:     ${CFG_SMS_URL:-(not configured)}"
     echo ""
-    [[ -z "${CFG_LOGIN_KEY:-}"     ]] && CFG_LOGIN_KEY=$(gen_app_key)   && ok "Login app key (generated)"
-    [[ -z "${CFG_ADMIN_KEY:-}"     ]] && CFG_ADMIN_KEY=$(gen_app_key)   && ok "Admin app key (generated)"
     [[ -z "${CFG_API_KEY:-}"       ]] && CFG_API_KEY=$(gen_app_key)     && ok "API app key (generated)"
-    [[ -z "${CFG_GRAPHQL_KEY:-}"   ]] && CFG_GRAPHQL_KEY=$(gen_app_key) && ok "GraphQL app key (generated)"
     [[ -z "${CFG_PUSHER_ID:-}"     ]] && CFG_PUSHER_ID=$(gen_pusher_id)
     [[ -z "${CFG_PUSHER_KEY:-}"    ]] && CFG_PUSHER_KEY=$(gen_hex)
     [[ -z "${CFG_PUSHER_SECRET:-}" ]] && CFG_PUSHER_SECRET=$(gen_hex)
     [[ -z "${CFG_INFLUX_PASS:-}"   ]] && CFG_INFLUX_PASS=$(gen_password)
     [[ -z "${CFG_INFLUX_TOKEN:-}"  ]] && CFG_INFLUX_TOKEN=$(gen_hex)
-    : "${CFG_FRP_SERVER_PORT:=7000}"
-    : "${CFG_FRP_TOKEN:=change-me}"
     : "${CFG_SWARM_HOST_DOMAIN:=host-swarm.net}"
     if [[ -z "${CFG_PASSPORT_PRIVATE:-}" ]]; then
       echo -ne "  Generating Passport RSA keys (4096-bit)..." >/dev/tty
@@ -375,17 +339,11 @@ collect_config() {
   echo ""
   CFG_DOMAIN=$(ask "Main domain" "track-any-device.com")
   CFG_SCHEME="https"
-  CFG_LOGIN_DOMAIN="login.${CFG_DOMAIN}"
-  CFG_ADMIN_DOMAIN="admin.${CFG_DOMAIN}"
-  CFG_GRAPHQL_DOMAIN="graphql.${CFG_DOMAIN}"
   CFG_SWARM_HOST_DOMAIN=$(ask "Swarm host domain (for *-tad.<domain> router hostnames)" "host-swarm.net")
 
   echo ""
   dim "  Your existing Traefik (on external network '${TRAEFIK_NET}') will route,"
   dim "  with TLS (tls=true), each service on BOTH a swarm-host name and the real domain:"
-  dim "    Login:    login-tad.${CFG_SWARM_HOST_DOMAIN}    | ${CFG_LOGIN_DOMAIN}"
-  dim "    Admin:    admin-tad.${CFG_SWARM_HOST_DOMAIN}    | ${CFG_ADMIN_DOMAIN}"
-  dim "    GraphQL:  graphql-tad.${CFG_SWARM_HOST_DOMAIN}  | ${CFG_GRAPHQL_DOMAIN}"
   dim "    API:      api-tad.${CFG_SWARM_HOST_DOMAIN}      | api.${CFG_DOMAIN}"
   dim "    Realtime: ws-tad.${CFG_SWARM_HOST_DOMAIN}       | ws.${CFG_DOMAIN}"
   echo ""
@@ -403,12 +361,13 @@ collect_config() {
   ok "Database: ${CFG_MYSQL_USER}@mysql/${CFG_MYSQL_DB}"
 
   echo ""
-  echo -e "${BOLD}── Step 3/4 — frp tunnel & device endpoints ────────────────────${RESET}"
+  echo -e "${BOLD}── Step 3/4 — Device protocol endpoints (direct ports) ─────────${RESET}"
   echo ""
-  dim "  frp publishes the JT808 TCP port through a public frps server."
-  CFG_FRP_SERVER_ADDR=$(ask "frps server address (public IP/host of your frp server)")
-  CFG_FRP_SERVER_PORT=$(ask "frps server port" "7000")
-  CFG_FRP_TOKEN=$(ask   "frp auth token" "change-me")
+  dim "  The device protocol servers are published DIRECTLY as Swarm ports on the"
+  dim "  host (no frp/Cloudflare tunnel). Trackers connect straight to a node IP:"
+  dim "    JT808: TCP 7018   GT06: TCP 7019   H02: TCP 7020 + UDP 7021"
+  dim "  Open these ports in your host/cloud firewall so trackers can reach them."
+  echo ""
 
   CFG_JT808_HOST=$(ask "JT808 host to send in device setup SMS (blank = use APP_DOMAIN)")
   CFG_JT808_PORT=$(ask "JT808 port to send in device setup SMS" "7018")
@@ -429,10 +388,7 @@ collect_config() {
   echo ""
   echo -e "${BOLD}── Step 4/4 — Generating secrets ───────────────────────────────${RESET}"
   echo ""
-  CFG_LOGIN_KEY=$(gen_app_key);   ok "Login app key"
-  CFG_ADMIN_KEY=$(gen_app_key);   ok "Admin app key"
   CFG_API_KEY=$(gen_app_key);     ok "API app key"
-  CFG_GRAPHQL_KEY=$(gen_app_key); ok "GraphQL app key"
   CFG_PUSHER_ID=$(gen_pusher_id)
   CFG_PUSHER_KEY=$(gen_hex)
   CFG_PUSHER_SECRET=$(gen_hex)
@@ -458,7 +414,7 @@ collect_config() {
   echo "  Domain:             ${CFG_DOMAIN}"
   echo "  Swarm host domain:  ${CFG_SWARM_HOST_DOMAIN}"
   echo "  Database:           ${CFG_MYSQL_USER}@mysql/${CFG_MYSQL_DB}"
-  echo "  frp server:         ${CFG_FRP_SERVER_ADDR:-(skipped)}:${CFG_FRP_SERVER_PORT}"
+  echo "  Device ports:       JT808 7018/tcp · GT06 7019/tcp · H02 7020/tcp + 7021/udp (direct)"
   echo "  SMS Gateway:        ${CFG_SMS_URL:-(skipped)}"
   echo ""
   if ! confirm "Proceed with Swarm deployment?"; then
@@ -491,18 +447,12 @@ write_env() {
 
 # ── Domains & ingress ─────────────────────────────────────────────────────────
 APP_DOMAIN=${CFG_DOMAIN}
-LOGIN_DOMAIN=${CFG_LOGIN_DOMAIN}
-ADMIN_DOMAIN=${CFG_ADMIN_DOMAIN}
-GRAPHQL_DOMAIN=${CFG_GRAPHQL_DOMAIN}
 SESSION_DOMAIN=.${CFG_DOMAIN}
 # Swarm host domain → Traefik router hostnames are <svc>-tad.<this>
 SWARM_HOST_DOMAIN=${CFG_SWARM_HOST_DOMAIN}
 
 # ── App encryption keys ───────────────────────────────────────────────────────
-LOGIN_APP_KEY=${CFG_LOGIN_KEY}
-ADMIN_APP_KEY=${CFG_ADMIN_KEY}
 API_APP_KEY=${CFG_API_KEY}
-GRAPHQL_APP_KEY=${CFG_GRAPHQL_KEY}
 
 # ── Database ──────────────────────────────────────────────────────────────────
 MYSQL_ROOT_PASSWORD=${CFG_MYSQL_ROOT_PASS}
@@ -526,17 +476,6 @@ INFLUXDB_TOKEN=${CFG_INFLUX_TOKEN}
 PASSPORT_PRIVATE_KEY_B64=${CFG_PASSPORT_PRIVATE}
 PASSPORT_PUBLIC_KEY_B64=${CFG_PASSPORT_PUBLIC}
 
-# ── Static OAuth clients (seeded by php artisan db:seed) ──────────────────────
-WEB_SSO_CLIENT_ID=${WEB_CLIENT_ID}
-WEB_SSO_CLIENT_SECRET=${WEB_CLIENT_SECRET}
-MY_SSO_CLIENT_ID=${MY_CLIENT_ID}
-MY_SSO_CLIENT_SECRET=${MY_CLIENT_SECRET}
-ADMIN_SSO_CLIENT_ID=${ADMIN_CLIENT_ID}
-ADMIN_SSO_CLIENT_SECRET=${ADMIN_CLIENT_SECRET}
-GRAPHQL_SSO_CLIENT_ID=${GRAPHQL_CLIENT_ID}
-GRAPHQL_SSO_CLIENT_SECRET=${GRAPHQL_CLIENT_SECRET}
-MOBILE_CLIENT_ID=${MOBILE_CLIENT_ID}
-
 # ── SMS Gateway (optional) ────────────────────────────────────────────────────
 SMS_GATEWAY_URL=${CFG_SMS_URL:-}
 SMS_GATEWAY_API_KEY=${CFG_SMS_KEY:-}
@@ -555,15 +494,6 @@ GT06_PORT=${CFG_GT06_PORT:-7019}
 H02_HOST=${CFG_H02_HOST:-}
 H02_TCP_PORT=${CFG_H02_TCP_PORT:-7020}
 H02_UDP_PORT=${CFG_H02_UDP_PORT:-7021}
-
-# ── GraphQL M2M bearer token ──────────────────────────────────────────────────
-GRAPHQL_KEY=
-GRAPHQL_SECRET=
-
-# ── frp tunnel (publishes JT808 TCP via a public frps server) ─────────────────
-FRP_SERVER_ADDR=${CFG_FRP_SERVER_ADDR:-}
-FRP_SERVER_PORT=${CFG_FRP_SERVER_PORT:-7000}
-FRP_TOKEN=${CFG_FRP_TOKEN:-change-me}
 ENV
 
   ok ".env written — all secrets generated, no manual editing required"
@@ -587,9 +517,6 @@ patch_env() {
   }
 
   _ensure_var "SWARM_HOST_DOMAIN" "host-swarm.net"
-  _ensure_var "FRP_SERVER_ADDR"   ""
-  _ensure_var "FRP_SERVER_PORT"   "7000"
-  _ensure_var "FRP_TOKEN"         "change-me"
   _ensure_var "GT06_HOST"         ""
   _ensure_var "GT06_PORT"         "7019"
   _ensure_var "H02_HOST"          ""
@@ -616,41 +543,6 @@ create_directories() {
   ok "Directories ready"
 }
 
-# ── frp client config (delivered to the frpc task as a Docker config) ─────────
-write_frpc_config() {
-  if $DRY_RUN; then
-    echo "  [dry] Would write ${FRPC_FILE} and compute its config version"
-    FRPC_CONFIG_VERSION="dryrun"
-    return
-  fi
-
-  log "Writing frp client config (${FRPC_FILE})..."
-  set -a; source "${ENV_FILE}" 2>/dev/null || true; set +a
-
-  cat > "${FRPC_FILE}" <<FRPC
-# Auto-generated by tad.sh — frp client config (frp v0.61, TOML).
-# Publishes the JT808 TCP port through the public frps server so GPS trackers
-# can reach the jt808 service (resolved over the Swarm overlay network).
-serverAddr = "${FRP_SERVER_ADDR:-}"
-serverPort = ${FRP_SERVER_PORT:-7000}
-
-auth.method = "token"
-auth.token  = "${FRP_TOKEN:-change-me}"
-
-[[proxies]]
-name = "jt808"
-type = "tcp"
-localIP = "jt808"
-localPort = 7018
-remotePort = ${JT808_PORT:-7018}
-FRPC
-
-  # Swarm configs are immutable; version the config name by content hash so a
-  # changed frpc.toml produces a new config on --update instead of being ignored.
-  FRPC_CONFIG_VERSION=$( (sha1sum "${FRPC_FILE}" 2>/dev/null || shasum "${FRPC_FILE}") | cut -c1-8 )
-  ok "frp config written (version ${FRPC_CONFIG_VERSION})"
-}
-
 # ── Swarm stack file generation ───────────────────────────────────────────────
 generate_stack() {
   log "Generating Swarm stack file (${STACK_FILE}) — API: ${TAD_SERVER_API_TAG}..."
@@ -666,8 +558,7 @@ generate_stack() {
 # Deploy with:  set -a; source .env.tad; set +a; docker stack deploy -c tad.yml ${STACK}
 # Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 #
-# Versions:  login=${TAD_SERVER_LOGIN_TAG}  admin=${TAD_SERVER_ADMIN_TAG}
-#            api=${TAD_SERVER_API_TAG}  graphql=${TAD_SERVER_GRAPHQL_TAG}
+# Versions:  api=${TAD_SERVER_API_TAG}
 #            jt808=${TAD_JT808_TAG}  gt06=${TAD_GT06_TAG}  h02=${TAD_H02_TAG}
 
 x-deploy-any: &deploy-any
@@ -701,9 +592,6 @@ x-app-env: &app-env
   TRUSTED_PROXIES: "*"
   SESSION_DOMAIN:  \${SESSION_DOMAIN:-.track-any-device.com}
   APP_DOMAIN:      \${APP_DOMAIN}
-  LOGIN_DOMAIN:    \${LOGIN_DOMAIN}
-  ADMIN_DOMAIN:    \${ADMIN_DOMAIN}
-  GRAPHQL_DOMAIN:  \${GRAPHQL_DOMAIN}
   DB_CONNECTION: mysql
   DB_HOST:       mysql
   DB_PORT:       3306
@@ -740,55 +628,6 @@ x-app-env: &app-env
 
 services:
 
-  # ── SSO Identity Provider ────────────────────────────────────────────────────
-  login:
-    image: ${ORG}/server-login:latest
-    networks: [tad, traefik-net]
-    volumes:
-      - ${INSTALL_DIR}/volumes/app_storage:/app/storage/app
-    environment:
-      <<: *app-env
-      APP_SURFACE: login
-      APP_URL: https://\${LOGIN_DOMAIN}
-      APP_KEY: \${LOGIN_APP_KEY}
-      SESSION_COOKIE: login_session
-    deploy:
-      <<: *deploy-storage
-      resources: *res-app
-      labels:
-        - "traefik.enable=true"
-        - "traefik.swarm.network=${TRAEFIK_NET}"
-        - "traefik.http.services.tad-login.loadbalancer.server.port=80"
-        - "traefik.http.routers.tad-login.rule=Host(\`login-tad.\${SWARM_HOST_DOMAIN}\`) || Host(\`\${LOGIN_DOMAIN}\`)"
-        - "traefik.http.routers.tad-login.entrypoints=websecure"
-        - "traefik.http.routers.tad-login.tls=true"
-        - "traefik.http.routers.tad-login.service=tad-login"
-
-  # ── Filament Admin Panel ─────────────────────────────────────────────────────
-  admin:
-    image: ${ORG}/server-admin:latest
-    networks: [tad, traefik-net]
-    volumes:
-      - ${INSTALL_DIR}/volumes/app_storage:/app/storage/app
-    environment:
-      <<: *app-env
-      APP_SURFACE: admin
-      APP_URL: https://\${ADMIN_DOMAIN}
-      APP_KEY: \${ADMIN_APP_KEY}
-      SESSION_COOKIE: admin_session
-      SSO_SERVER_URL: https://\${LOGIN_DOMAIN}
-    deploy:
-      <<: *deploy-storage
-      resources: *res-app
-      labels:
-        - "traefik.enable=true"
-        - "traefik.swarm.network=${TRAEFIK_NET}"
-        - "traefik.http.services.tad-admin.loadbalancer.server.port=80"
-        - "traefik.http.routers.tad-admin.rule=Host(\`admin-tad.\${SWARM_HOST_DOMAIN}\`) || Host(\`\${ADMIN_DOMAIN}\`)"
-        - "traefik.http.routers.tad-admin.entrypoints=websecure"
-        - "traefik.http.routers.tad-admin.tls=true"
-        - "traefik.http.routers.tad-admin.service=tad-admin"
-
   # ── Central REST API Server ──────────────────────────────────────────────────
   api:
     image: ${ORG}/server-api:latest
@@ -798,7 +637,6 @@ services:
       APP_SURFACE: api
       APP_URL: https://api.\${APP_DOMAIN}
       APP_KEY: \${API_APP_KEY}
-      SSO_SERVER_URL: https://\${LOGIN_DOMAIN}
       LOG_CHANNEL: stderr
       JT808_HOST: \${JT808_HOST:-}
       JT808_PORT: \${JT808_PORT:-7018}
@@ -818,31 +656,6 @@ services:
         - "traefik.http.routers.tad-api.entrypoints=websecure"
         - "traefik.http.routers.tad-api.tls=true"
         - "traefik.http.routers.tad-api.service=tad-api"
-
-  # ── GraphQL API ──────────────────────────────────────────────────────────────
-  graphql:
-    image: ${ORG}/server-graphql:latest
-    networks: [tad, traefik-net]
-    environment:
-      <<: *app-env
-      APP_SURFACE: graphql
-      APP_URL: https://\${GRAPHQL_DOMAIN}
-      APP_KEY: \${GRAPHQL_APP_KEY}
-      SESSION_COOKIE: graphql_session
-      SSO_SERVER_URL: https://\${LOGIN_DOMAIN}
-      GRAPHQL_KEY:    \${GRAPHQL_KEY:-}
-      GRAPHQL_SECRET: \${GRAPHQL_SECRET:-}
-    deploy:
-      <<: *deploy-any
-      resources: *res-app
-      labels:
-        - "traefik.enable=true"
-        - "traefik.swarm.network=${TRAEFIK_NET}"
-        - "traefik.http.services.tad-graphql.loadbalancer.server.port=80"
-        - "traefik.http.routers.tad-graphql.rule=Host(\`graphql-tad.\${SWARM_HOST_DOMAIN}\`) || Host(\`\${GRAPHQL_DOMAIN}\`)"
-        - "traefik.http.routers.tad-graphql.entrypoints=websecure"
-        - "traefik.http.routers.tad-graphql.tls=true"
-        - "traefik.http.routers.tad-graphql.service=tad-graphql"
 
   # ── Scheduler (also the migration runner — pinned to storage node) ───────────
   cron:
@@ -894,7 +707,7 @@ services:
       <<: *deploy-any
       resources: *res-worker
 
-  # ── JT808 GPS TCP Server (published via frp; host-mode port for source IP) ───
+  # ── JT808 GPS TCP Server (direct host-mode port — preserves device source IP) ─
   jt808:
     image: ${ORG}/jt808-server:latest
     networks: [tad]
@@ -1101,22 +914,6 @@ services:
       <<: *deploy-any
       resources: *res-small
 
-  # ── frp tunnel — publishes JT808 TCP through a public frps server ────────────
-  frpc:
-    image: snowdreamtech/frpc:${FRPC_VERSION}
-    networks: [tad]
-    configs:
-      - source: frpc_toml
-        target: /etc/frp/frpc.toml
-    deploy:
-      <<: *deploy-any
-      resources: *res-small
-
-configs:
-  frpc_toml:
-    file: ${FRPC_FILE}
-    name: tad_frpc_${FRPC_CONFIG_VERSION}
-
 networks:
   tad:
     driver: overlay
@@ -1217,30 +1014,25 @@ show_status() {
   fi
   echo ""
   echo -e "${BOLD}── Versions ────────────────────────────────────────────────────${RESET}"
-  echo "  server-login:    ${TAD_SERVER_LOGIN_TAG}"
-  echo "  server-admin:    ${TAD_SERVER_ADMIN_TAG}"
   echo "  server-api:      ${TAD_SERVER_API_TAG}"
-  echo "  server-graphql:  ${TAD_SERVER_GRAPHQL_TAG}"
   echo "  jt808:           ${TAD_JT808_TAG}"
   echo "  gt06:            ${TAD_GT06_TAG}"
   echo "  h02:             ${TAD_H02_TAG}"
   echo ""
   local shd="${SWARM_HOST_DOMAIN:-host-swarm.net}"
   echo -e "${BOLD}── Access (routed by your Traefik on ${TRAEFIK_NET}) ─────────────${RESET}"
-  echo "  Login (SSO):  https://${LOGIN_DOMAIN:-login.track-any-device.com}   | https://login-tad.${shd}"
-  echo "  Admin panel:  https://${ADMIN_DOMAIN:-admin.track-any-device.com}   | https://admin-tad.${shd}"
-  echo "  GraphQL:      https://${GRAPHQL_DOMAIN:-graphql.track-any-device.com} | https://graphql-tad.${shd}"
   echo "  REST API:     https://api.${APP_DOMAIN:-track-any-device.com}     | https://api-tad.${shd}"
   echo "  Realtime WS:  https://ws.${APP_DOMAIN:-track-any-device.com}      | https://ws-tad.${shd}"
   echo "  phpMyAdmin:   http://<node-ip>:3333"
   echo "  MailPit:      http://<node-ip>:8025"
   echo ""
   local jt808_host="${JT808_HOST:-${APP_DOMAIN:-<your-domain>}}"
-  echo -e "${BOLD}── Protocol Gateway Endpoints ──────────────────────────────────${RESET}"
-  echo "    JT808: ${jt808_host}:${JT808_PORT:-7018}  (TCP, published via frp)"
-  echo "    GT06:  ${GT06_HOST:-${APP_DOMAIN:-<your-domain>}}:${GT06_PORT:-7019}  (TCP)"
-  echo "    H02:   ${H02_HOST:-${APP_DOMAIN:-<your-domain>}}:${H02_TCP_PORT:-7020}(TCP)/${H02_UDP_PORT:-7021}(UDP)"
+  echo -e "${BOLD}── Protocol Gateway Endpoints (direct Swarm ports) ─────────────${RESET}"
+  echo "    JT808: ${jt808_host}:${JT808_PORT:-7018}  (TCP, host-published)"
+  echo "    GT06:  ${GT06_HOST:-${APP_DOMAIN:-<your-domain>}}:${GT06_PORT:-7019}  (TCP, host-published)"
+  echo "    H02:   ${H02_HOST:-${APP_DOMAIN:-<your-domain>}}:${H02_TCP_PORT:-7020}(TCP)/${H02_UDP_PORT:-7021}(UDP)  (host-published)"
   echo "  JT808 metrics: http://<node-ip>:9090/metrics"
+  echo "  Open these device ports in your host/cloud firewall on the node(s) running each server."
   echo ""
 }
 
@@ -1259,7 +1051,6 @@ main() {
     set -a; source "${ENV_FILE}" 2>/dev/null || true; set +a
     patch_env
     set -a; source "${ENV_FILE}" 2>/dev/null || true; set +a
-    write_frpc_config
     generate_stack
     stack_deploy
     wait_for_app
@@ -1273,7 +1064,6 @@ main() {
     collect_config
     create_directories
     write_env
-    write_frpc_config
     generate_stack
     stack_deploy
     wait_for_db
@@ -1286,12 +1076,13 @@ main() {
     echo -e "${RESET}"
     echo "  Next steps:"
     echo "    1. Ensure your Traefik is attached to the '${TRAEFIK_NET}' network so it"
-    echo "       can route the tad-* routers (login/admin/api/graphql/ws)."
+    echo "       can route the tad-* routers (api/ws)."
     echo "    2. Point DNS (real domains + *-tad.${CFG_SWARM_HOST_DOMAIN:-host-swarm.net})"
     echo "       at the node(s) where your Traefik publishes :443."
     echo "    3. Add worker nodes with the 'docker swarm join' command shown above."
-    echo "    4. Configure your frps server to accept the JT808 proxy (token must match)."
-    echo "    5. Open the admin panel → approve your first tenant."
+    echo "    4. Open the device protocol ports in your host/cloud firewall so trackers"
+    echo "       can reach them directly: 7018/tcp (JT808), 7019/tcp (GT06),"
+    echo "       7020/tcp + 7021/udp (H02)."
     echo ""
     echo "  Config saved to: ${ENV_FILE}"
     echo "  Stack file:      ${STACK_FILE}"

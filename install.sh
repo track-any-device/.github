@@ -28,10 +28,7 @@ set -euo pipefail
 # The script ALWAYS fetches the real latest release tags from GitHub at runtime.
 # These values are only used when GitHub is unreachable (no internet / rate limit).
 # VERSIONS_START
-TAD_SERVER_LOGIN_TAG="v0.4.3"
-TAD_SERVER_ADMIN_TAG="v0.0.9"
 TAD_SERVER_API_TAG="v0.1.424-ac19c5e0"
-TAD_SERVER_GRAPHQL_TAG="v0.0.7"
 TAD_SERVER_TENANT_TAG="latest"
 TAD_SERVER_WEB_TAG="latest"
 TAD_JT808_TAG="0.1.1"
@@ -50,19 +47,6 @@ CLOUDFLARED_VERSION="2025.5.0"
 GRAFANA_VERSION="11.6.0"
 LOKI_VERSION="3.5.0"
 FRPC_VERSION="0.61.1"
-
-# ── Static OAuth client credentials (seeded automatically by db:seed) ─────────
-# These match OAuthClientSeeder in package-sso-server.
-# Web and mobile apps embed these as defaults — no configuration needed.
-WEB_CLIENT_ID="tad_web_portal"
-WEB_CLIENT_SECRET="tad_web_portal_secret"
-MY_CLIENT_ID="tad_my_portal"
-MY_CLIENT_SECRET="tad_my_portal_secret"
-ADMIN_CLIENT_ID="tad_admin_panel"
-ADMIN_CLIENT_SECRET="tad_admin_panel_secret"
-GRAPHQL_CLIENT_ID="tad_graphql_api"
-GRAPHQL_CLIENT_SECRET="tad_graphql_api_secret"
-MOBILE_CLIENT_ID="tad_mobile_tad101"   # PKCE — no secret
 
 # ── Config ────────────────────────────────────────────────────────────────────
 INSTALL_DIR="${TAD_DIR:-$HOME/tad}"
@@ -112,12 +96,9 @@ _gh_latest() {
 fetch_versions() {
   log "Fetching latest release versions from GitHub..."
 
-  local login admin api graphql tenant web jt808 gt06 h02
+  local api tenant web jt808 gt06 h02
 
-  login=$(  _gh_latest "server-login")
-  admin=$(   _gh_latest "server-admin")
   api=$(     _gh_latest "app")
-  graphql=$( _gh_latest "server-graphql")
   tenant=$(  _gh_latest "server-tenant")
   web=$(     _gh_latest "web")
   jt808=$(   _gh_latest "server-jt808")
@@ -125,10 +106,7 @@ fetch_versions() {
   h02=$(     _gh_latest "server-h02")
 
   # Apply resolved tags, falling back to the offline defaults for any empty result
-  [[ -n "$login"   ]] && TAD_SERVER_LOGIN_TAG="$login"     || warn "server-login:   using fallback ${TAD_SERVER_LOGIN_TAG}"
-  [[ -n "$admin"   ]] && TAD_SERVER_ADMIN_TAG="$admin"     || warn "server-admin:   using fallback ${TAD_SERVER_ADMIN_TAG}"
   [[ -n "$api"     ]] && TAD_SERVER_API_TAG="$api"         || warn "server-api:     using fallback ${TAD_SERVER_API_TAG}"
-  [[ -n "$graphql" ]] && TAD_SERVER_GRAPHQL_TAG="$graphql" || warn "server-graphql: using fallback ${TAD_SERVER_GRAPHQL_TAG}"
   [[ -n "$tenant"  ]] && TAD_SERVER_TENANT_TAG="$tenant"   # stays 'latest' if no release
   [[ -n "$web"     ]] && TAD_SERVER_WEB_TAG="$web"         # stays 'latest' if no release
   [[ -n "$jt808"   ]] && TAD_JT808_TAG="$jt808"
@@ -137,10 +115,7 @@ fetch_versions() {
 
   echo ""
   echo -e "${BOLD}── Resolved versions ───────────────────────────────────────────${RESET}"
-  printf "  %-18s %s\n" "server-login:"    "${TAD_SERVER_LOGIN_TAG}"
-  printf "  %-18s %s\n" "server-admin:"    "${TAD_SERVER_ADMIN_TAG}"
   printf "  %-18s %s\n" "server-api:"      "${TAD_SERVER_API_TAG}"
-  printf "  %-18s %s\n" "server-graphql:"  "${TAD_SERVER_GRAPHQL_TAG}"
   printf "  %-18s %s\n" "server-tenant:"   "${TAD_SERVER_TENANT_TAG}"
   printf "  %-18s %s\n" "jt808-server:"    "${TAD_JT808_TAG}"
   printf "  %-18s %s\n" "gt06-server:"     "${TAD_GT06_TAG}"
@@ -236,9 +211,6 @@ detect_existing_env() {
   # Map every env var back to the CFG_* names collect_config would have set
   CFG_DOMAIN="${APP_DOMAIN:-}"
   CFG_SCHEME="https"
-  CFG_LOGIN_DOMAIN="${LOGIN_DOMAIN:-login.${CFG_DOMAIN}}"
-  CFG_ADMIN_DOMAIN="${ADMIN_DOMAIN:-admin.${CFG_DOMAIN}}"
-  CFG_GRAPHQL_DOMAIN="${GRAPHQL_DOMAIN:-graphql.${CFG_DOMAIN}}"
   CFG_MYSQL_DB="${MYSQL_DATABASE:-tad}"
   CFG_MYSQL_USER="${MYSQL_USER:-tad}"
   CFG_MYSQL_ROOT_PASS="${MYSQL_ROOT_PASSWORD:-}"
@@ -254,10 +226,7 @@ detect_existing_env() {
   CFG_SMS_URL="${SMS_GATEWAY_URL:-}"
   CFG_SMS_KEY="${SMS_GATEWAY_API_KEY:-}"
   CFG_SMS_NUMBER="${SMS_MASTER_NUMBER:-}"
-  CFG_LOGIN_KEY="${LOGIN_APP_KEY:-}"
-  CFG_ADMIN_KEY="${ADMIN_APP_KEY:-}"
   CFG_API_KEY="${API_APP_KEY:-}"
-  CFG_GRAPHQL_KEY="${GRAPHQL_APP_KEY:-}"
   CFG_PUSHER_ID="${PUSHER_APP_ID:-}"
   CFG_PUSHER_KEY="${PUSHER_APP_KEY:-}"
   CFG_PUSHER_SECRET="${PUSHER_APP_SECRET:-}"
@@ -288,10 +257,7 @@ collect_config() {
     dim "  All secrets (app keys, DB passwords, Passport RSA keys) preserved."
     echo ""
     # Generate only secrets that are missing from the old .env
-    [[ -z "${CFG_LOGIN_KEY:-}"       ]] && CFG_LOGIN_KEY=$(gen_app_key)   && ok "Login app key (generated)"
-    [[ -z "${CFG_ADMIN_KEY:-}"       ]] && CFG_ADMIN_KEY=$(gen_app_key)   && ok "Admin app key (generated)"
     [[ -z "${CFG_API_KEY:-}"         ]] && CFG_API_KEY=$(gen_app_key)     && ok "API app key (generated)"
-    [[ -z "${CFG_GRAPHQL_KEY:-}"     ]] && CFG_GRAPHQL_KEY=$(gen_app_key) && ok "GraphQL app key (generated)"
     [[ -z "${CFG_PUSHER_ID:-}"       ]] && CFG_PUSHER_ID=$(gen_pusher_id)
     [[ -z "${CFG_PUSHER_KEY:-}"      ]] && CFG_PUSHER_KEY=$(gen_hex)
     [[ -z "${CFG_PUSHER_SECRET:-}"   ]] && CFG_PUSHER_SECRET=$(gen_hex)
@@ -317,16 +283,8 @@ collect_config() {
   CFG_DOMAIN=$(ask "Main domain" "track-any-device.com")
   CFG_SCHEME="https"
 
-  # Derive subdomains
-  CFG_LOGIN_DOMAIN="login.${CFG_DOMAIN}"
-  CFG_ADMIN_DOMAIN="admin.${CFG_DOMAIN}"
-  CFG_GRAPHQL_DOMAIN="graphql.${CFG_DOMAIN}"
-
   echo ""
   dim "  Subdomains derived:"
-  dim "    Login:   ${CFG_LOGIN_DOMAIN}"
-  dim "    Admin:   ${CFG_ADMIN_DOMAIN}"
-  dim "    GraphQL: ${CFG_GRAPHQL_DOMAIN}"
   dim "    API:     api.${CFG_DOMAIN}"
   dim "    Web/My:  ${CFG_DOMAIN}/my"
   echo ""
@@ -382,10 +340,7 @@ collect_config() {
   echo ""
 
   # App encryption keys
-  CFG_LOGIN_KEY=$(gen_app_key);   ok "Login app key"
-  CFG_ADMIN_KEY=$(gen_app_key);   ok "Admin app key"
   CFG_API_KEY=$(gen_app_key);     ok "API app key"
-  CFG_GRAPHQL_KEY=$(gen_app_key); ok "GraphQL app key"
 
   # Pusher / Soketi
   CFG_PUSHER_ID=$(gen_pusher_id)
@@ -407,12 +362,6 @@ collect_config() {
   echo " done" >/dev/tty
   ok "Passport RSA key pair"
 
-  echo ""
-  ok "OAuth clients (pre-seeded, no action needed):"
-  dim "    Web portal:    ${WEB_CLIENT_ID} / ${WEB_CLIENT_SECRET}"
-  dim "    Admin panel:   ${ADMIN_CLIENT_ID} / ${ADMIN_CLIENT_SECRET}"
-  dim "    GraphQL:       ${GRAPHQL_CLIENT_ID} / ${GRAPHQL_CLIENT_SECRET}"
-  dim "    Mobile (PKCE): ${MOBILE_CLIENT_ID} (no secret)"
   echo ""
 
   # Final confirmation
@@ -459,16 +408,10 @@ write_env() {
 
 # ── Domain ────────────────────────────────────────────────────────────────────
 APP_DOMAIN=${CFG_DOMAIN}
-LOGIN_DOMAIN=${CFG_LOGIN_DOMAIN}
-ADMIN_DOMAIN=${CFG_ADMIN_DOMAIN}
-GRAPHQL_DOMAIN=${CFG_GRAPHQL_DOMAIN}
 SESSION_DOMAIN=.${CFG_DOMAIN}
 
 # ── App encryption keys ───────────────────────────────────────────────────────
-LOGIN_APP_KEY=${CFG_LOGIN_KEY}
-ADMIN_APP_KEY=${CFG_ADMIN_KEY}
 API_APP_KEY=${CFG_API_KEY}
-GRAPHQL_APP_KEY=${CFG_GRAPHQL_KEY}
 
 # ── Database ──────────────────────────────────────────────────────────────────
 MYSQL_ROOT_PASSWORD=${CFG_MYSQL_ROOT_PASS}
@@ -491,25 +434,9 @@ INFLUXDB_TOKEN=${CFG_INFLUX_TOKEN}
 # ── Passport OAuth2 RSA keys ──────────────────────────────────────────────────
 # Generated at install time. Do not lose these — Passport tokens are signed
 # with the private key and verified with the public key.
-# To rotate: generate new keys and restart login + api + graphql + admin.
+# To rotate: generate new keys and restart the api service.
 PASSPORT_PRIVATE_KEY_B64=${CFG_PASSPORT_PRIVATE}
 PASSPORT_PUBLIC_KEY_B64=${CFG_PASSPORT_PUBLIC}
-
-# ── Static OAuth clients (seeded automatically by php artisan db:seed) ────────
-# These are baked into the web and mobile apps as default values.
-# No additional configuration needed for web portal or mobile app.
-# To rotate for production: update these values, delete the oauth_clients rows,
-# and re-run php artisan db:seed.
-WEB_SSO_CLIENT_ID=${WEB_CLIENT_ID}
-WEB_SSO_CLIENT_SECRET=${WEB_CLIENT_SECRET}
-MY_SSO_CLIENT_ID=${MY_CLIENT_ID}
-MY_SSO_CLIENT_SECRET=${MY_CLIENT_SECRET}
-ADMIN_SSO_CLIENT_ID=${ADMIN_CLIENT_ID}
-ADMIN_SSO_CLIENT_SECRET=${ADMIN_CLIENT_SECRET}
-GRAPHQL_SSO_CLIENT_ID=${GRAPHQL_CLIENT_ID}
-GRAPHQL_SSO_CLIENT_SECRET=${GRAPHQL_CLIENT_SECRET}
-MOBILE_CLIENT_ID=${MOBILE_CLIENT_ID}
-# Mobile uses PKCE — no client secret stored
 
 # ── Cloudflare Tunnel ─────────────────────────────────────────────────────────
 # Configure public hostnames in Zero Trust → Networks → Tunnels.
@@ -555,10 +482,6 @@ H02_TCP_PORT=${CFG_H02_TCP_PORT:-7020}
 H02_UDP_PORT=${CFG_H02_UDP_PORT:-7021}
 
 # ── Optional / advanced ───────────────────────────────────────────────────────
-# GraphQL M2M bearer token (for server-to-server API calls)
-GRAPHQL_KEY=
-GRAPHQL_SECRET=
-
 # frp tunnel (docker compose --profile frp up -d)
 FRP_SERVER_ADDR=
 FRP_TOKEN=change-me
@@ -820,10 +743,7 @@ scrape_configs:
         filters:
           - name: name
             values:
-              - login
-              - admin
               - api
-              - graphql
               - cli
               - cron
               - queue
@@ -892,8 +812,7 @@ generate_compose() {
 # Regenerate with: bash install.sh --update
 # Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 #
-# Versions:  login=${TAD_SERVER_LOGIN_TAG}  admin=${TAD_SERVER_ADMIN_TAG}
-#            api=${TAD_SERVER_API_TAG}  graphql=${TAD_SERVER_GRAPHQL_TAG}
+# Versions:  api=${TAD_SERVER_API_TAG}
 #            tenant=${TAD_SERVER_TENANT_TAG}  web=${TAD_SERVER_WEB_TAG}
 #            jt808=${TAD_JT808_TAG}  gt06=${TAD_GT06_TAG}  h02=${TAD_H02_TAG}
 
@@ -911,9 +830,6 @@ x-app-env: &app-env
   TRUSTED_PROXIES: "*"
   SESSION_DOMAIN:  \${SESSION_DOMAIN:-.track-any-device.com}
   APP_DOMAIN:      \${APP_DOMAIN}
-  LOGIN_DOMAIN:    \${LOGIN_DOMAIN}
-  ADMIN_DOMAIN:    \${ADMIN_DOMAIN}
-  GRAPHQL_DOMAIN:  \${GRAPHQL_DOMAIN}
   DB_CONNECTION: mysql
   DB_HOST:       mysql
   DB_PORT:       3306
@@ -950,31 +866,6 @@ x-app-env: &app-env
 
 services:
 
-  login:
-    <<: *app-base
-    image: ${ORG}/server-login:latest
-    container_name: login
-    volumes: [app_storage:/app/storage/app]
-    environment:
-      <<: *app-env
-      APP_SURFACE: login
-      APP_URL: https://\${LOGIN_DOMAIN}
-      APP_KEY: \${LOGIN_APP_KEY}
-      SESSION_COOKIE: login_session
-
-  admin:
-    <<: *app-base
-    image: ${ORG}/server-admin:latest
-    container_name: admin
-    volumes: [app_storage:/app/storage/app]
-    environment:
-      <<: *app-env
-      APP_SURFACE: admin
-      APP_URL: https://\${ADMIN_DOMAIN}
-      APP_KEY: \${ADMIN_APP_KEY}
-      SESSION_COOKIE: admin_session
-      SSO_SERVER_URL: https://\${LOGIN_DOMAIN}
-
   api:
     <<: *app-base
     image: ${ORG}/server-api:latest
@@ -984,7 +875,6 @@ services:
       APP_SURFACE: api
       APP_URL: https://api.\${APP_DOMAIN}
       APP_KEY: \${API_APP_KEY}
-      SSO_SERVER_URL: https://\${LOGIN_DOMAIN}
       LOG_CHANNEL: stderr
       APP_DEBUG: \${APP_DEBUG:-false}
       # Protocol server endpoints — sent to devices via SMS during onboarding
@@ -995,20 +885,6 @@ services:
       H02_HOST:   \${H02_HOST:-}
       H02_TCP_PORT: \${H02_TCP_PORT:-7020}
       H02_UDP_PORT: \${H02_UDP_PORT:-7021}
-
-  graphql:
-    <<: *app-base
-    image: ${ORG}/server-graphql:latest
-    container_name: graphql
-    environment:
-      <<: *app-env
-      APP_SURFACE: graphql
-      APP_URL: https://\${GRAPHQL_DOMAIN}
-      APP_KEY: \${GRAPHQL_APP_KEY}
-      SESSION_COOKIE: graphql_session
-      SSO_SERVER_URL: https://\${LOGIN_DOMAIN}
-      GRAPHQL_KEY:    \${GRAPHQL_KEY:-}
-      GRAPHQL_SECRET: \${GRAPHQL_SECRET:-}
 
   # web (Next.js) is deployed to Cloudflare Pages — not a Docker service.
   # Configure env vars via wrangler.toml or Cloudflare Pages dashboard.
@@ -1326,7 +1202,6 @@ volumes:
   influxdb_data:
   loki_data:
   grafana_data:
-  app_storage:
 COMPOSE
 
   ok "docker-compose.yml generated"
@@ -1448,10 +1323,7 @@ show_status() {
   fi
   echo ""
   echo -e "${BOLD}── Versions ────────────────────────────────────────────────────${RESET}"
-  echo "  server-login:    ${TAD_SERVER_LOGIN_TAG}"
-  echo "  server-admin:    ${TAD_SERVER_ADMIN_TAG}"
   echo "  server-api:      ${TAD_SERVER_API_TAG}"
-  echo "  server-graphql:  ${TAD_SERVER_GRAPHQL_TAG}"
   echo "  server-tenant:   ${TAD_SERVER_TENANT_TAG}"
   echo "  jt808:           ${TAD_JT808_TAG}"
   echo "  gt06:            ${TAD_GT06_TAG}"
@@ -1460,7 +1332,7 @@ show_status() {
   echo ""
   echo -e "${BOLD}── Access ──────────────────────────────────────────────────────${RESET}"
   echo "  Web + My portal: https://${APP_DOMAIN:-track-any-device.com}  (Cloudflare Pages)"
-  echo "  Admin panel:     https://${ADMIN_DOMAIN:-admin.track-any-device.com}"
+  echo "  API:             https://api.${APP_DOMAIN:-track-any-device.com}"
   echo "  phpMyAdmin:      http://localhost:3333"
   echo "  MailPit:         http://localhost:8025"
   echo ""
@@ -1477,12 +1349,6 @@ show_status() {
   echo "    GT06  host: ${gt06_host}:${gt06_port}  (TCP)"
   echo "    H02   host: ${h02_host}:${h02_tcp_port}(TCP) / ${h02_udp_port}(UDP)"
   echo "  JT808 observability:     http://localhost:9090/metrics"
-  echo ""
-  echo -e "${BOLD}── OAuth clients (static, pre-seeded) ──────────────────────────${RESET}"
-  echo "  Web portal:   ${WEB_CLIENT_ID}"
-  echo "  Admin panel:  ${ADMIN_CLIENT_ID}"
-  echo "  GraphQL:      ${GRAPHQL_CLIENT_ID}"
-  echo "  Mobile PKCE:  ${MOBILE_CLIENT_ID}  (no secret)"
   echo ""
 }
 
@@ -1536,9 +1402,8 @@ main() {
     echo -e "${RESET}"
     echo "  Next steps:"
     echo "    1. Add Cloudflare Tunnel public hostnames (if not already done)"
-    echo "    2. Open admin panel → approve your first tenant"
-    echo "    3. Add tenant portals: edit docker-compose.yml, add a tenant_* block"
-    echo "    4. For GPS tracking: JT808→:7018  GT06→:7019  H02→:7020(tcp)/:7021(udp)"
+    echo "    2. Open the web app → sign in with SMS-OTP and onboard your account"
+    echo "    3. For GPS tracking: JT808→:7018  GT06→:7019  H02→:7020(tcp)/:7021(udp)"
     echo ""
     echo "  Config saved to: ${INSTALL_DIR}/.env"
     echo "  Update later:    bash ${INSTALL_DIR}/install.sh --update"

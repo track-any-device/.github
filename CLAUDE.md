@@ -10,6 +10,10 @@ for the [track-any-device](https://github.com/track-any-device) organisation.
 | Path | Purpose |
 |---|---|
 | `profile/README.md` | Organisation homepage — shown publicly on github.com/track-any-device |
+| `install.sh` | Single-host installer — generates `docker-compose.yml` and `.env`, brings the stack up via Docker Compose; ingress through Cloudflare Tunnel + frp |
+| `docker-compose.yml` | Committed reference single-host stack (declares `jt808` only among the Go protocol servers) |
+| `tad.sh` | Docker Swarm installer — deploys `tad.yml` behind your own Traefik, with device protocol ports published directly on host ports |
+| `tad.yml` | Docker Swarm stack file |
 
 ---
 
