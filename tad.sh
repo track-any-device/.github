@@ -733,8 +733,7 @@ services:
     image: ${ORG}/server-tenant:\${TAD_SERVER_TENANT_TAG:-latest}
     networks: [tad, traefik-net]
     command: >
-      sh -c "php /var/www/html/artisan migrate --force &&
-             exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf"
+      sh -c "mkdir -p /var/www/html/sqlite && touch /var/www/html/sqlite/database.sqlite && php /var/www/html/artisan migrate --force && chown -R www-data:www-data /var/www/html/sqlite && exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf"
     environment:
       APP_ENV: production
       APP_KEY: \${TENANT_APP_KEY}
@@ -744,6 +743,7 @@ services:
       TENANT_API_TOKEN: \${TENANT_API_TOKEN}
       PLATFORM_API_URL: http://api
       DB_CONNECTION: sqlite
+      DB_DATABASE: /var/www/html/sqlite/database.sqlite
       BROADCAST_CONNECTION: pusher
       PUSHER_APP_KEY: \${PUSHER_APP_KEY}
       PUSHER_HOST:    soketi
@@ -753,7 +753,7 @@ services:
       GOOGLE_MAPS_API_KEY: \${GOOGLE_MAPS_API_KEY:-}
       LOG_CHANNEL: stderr
     volumes:
-      - ${INSTALL_DIR}/volumes/server_tenant_db:/var/www/html/database
+      - ${INSTALL_DIR}/volumes/server_tenant_db:/var/www/html/sqlite
     deploy:
       <<: *deploy-storage
       resources: *res-small
