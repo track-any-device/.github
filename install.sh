@@ -209,7 +209,7 @@ detect_existing_env() {
   set -a; source "$env_file" 2>/dev/null || true; set +a
 
   # Map every env var back to the CFG_* names collect_config would have set
-  CFG_DOMAIN="${APP_DOMAIN:-}"
+  CFG_DOMAIN="${APP_DOMAIN:-}"; CFG_DOMAIN="${CFG_DOMAIN#api.}"  # tolerate a stale APP_DOMAIN that already includes api.
   CFG_SCHEME="https"
   CFG_MYSQL_DB="${MYSQL_DATABASE:-tad}"
   CFG_MYSQL_USER="${MYSQL_USER:-tad}"
@@ -281,6 +281,9 @@ collect_config() {
   echo ""
 
   CFG_DOMAIN=$(ask "Main domain" "track-any-device.com")
+  # The API host is derived as api.${CFG_DOMAIN}; strip a leading "api." the user may have typed
+  # (e.g. api.track-any-device.com → track-any-device.com) so APP_URL never doubles to api.api.*.
+  CFG_DOMAIN="${CFG_DOMAIN#api.}"
   CFG_SCHEME="https"
 
   echo ""
