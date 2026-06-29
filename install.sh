@@ -958,8 +958,7 @@ services:
     networks: [tda]
     restart: unless-stopped
     command: >
-      sh -c "php /var/www/html/artisan migrate --force &&
-             exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf"
+      sh -c "mkdir -p /var/www/html/sqlite && touch /var/www/html/sqlite/database.sqlite && php /var/www/html/artisan migrate --force && chown -R www-data:www-data /var/www/html/sqlite && exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf"
     depends_on:
       api:    {condition: service_started}
       soketi: {condition: service_healthy}
@@ -972,6 +971,7 @@ services:
       TENANT_API_TOKEN: \${TENANT_API_TOKEN}
       PLATFORM_API_URL: http://api
       DB_CONNECTION: sqlite
+      DB_DATABASE: /var/www/html/sqlite/database.sqlite
       BROADCAST_CONNECTION: pusher
       PUSHER_APP_KEY: \${PUSHER_APP_KEY}
       PUSHER_HOST:    soketi
@@ -981,7 +981,7 @@ services:
       GOOGLE_MAPS_API_KEY: \${GOOGLE_MAPS_API_KEY:-}
       LOG_CHANNEL: stderr
     volumes:
-      - server_tenant_db:/var/www/html/database
+      - server_tenant_db:/var/www/html/sqlite
 
   cron:
     <<: *app-base
