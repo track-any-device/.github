@@ -3,7 +3,7 @@
 # Deploy with:  set -a; source .env.tad; set +a; docker stack deploy -c tad.yml tad
 # Generated: 2026-06-17T08:03:15Z
 #
-# Versions:  api=v0.1.424-ac19c5e0
+# Versions:  api=v0.1.424-ac19c5e0  tenant=latest (public tracker)
 #            jt808=0.1.1  gt06=0.1.1  h02=0.1.1
 
 x-deploy-any: &deploy-any
@@ -101,6 +101,58 @@ services:
         - "traefik.http.routers.tad-api.entrypoints=websecure"
         - "traefik.http.routers.tad-api.tls=true"
         - "traefik.http.routers.tad-api.service=tad-api"
+
+  # ── Public Current-State Tracker (server-tenant) ─────────────────────────────
+  # Standalone PUBLIC device tracker (image trackanydevice/server-tenant, SQLite,
+  # current-state only). Authenticates to the central api's /api/portal endpoints
+  # with the tenant's machine ACCESS KEY: Authorization: Bearer ${TENANT_API_TOKEN}
+  # + X-Tenant-Id: ${APP_TENANT_ID}. Generate/copy the Tenant ID + access key from
+  # the admin org-details screen (/admin organisations → rotate via
+  # POST /api/admin/tenants/{id}/key) — there is no minting here.
+  #
+  # ROUTING: your existing Traefik publishes it on Host(`${TRACKER_HOST}`) → :80,
+  # mirroring the api router's tls/entrypoint labels.
+  #
+  # SQLite persistence: pinned to the storage node with a local bind volume so the
+  # current-state DB survives restarts. Runs migrate --force on boot (creating the
+  # schema in an empty volume on first run) before starting supervisord
+  # (nginx + php-fpm + tenant:listen-signals).
+  server-tenant:
+    image: trackanydevice/server-tenant:${TAD_SERVER_TENANT_TAG:-latest}
+    networks: [tad, traefik-net]
+    command: >
+      sh -c "php /var/www/html/artisan migrate --force &&
+             exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf"
+    environment:
+      APP_ENV: production
+      APP_KEY: ${TENANT_APP_KEY}
+      APP_URL: https://${TRACKER_HOST}
+      APP_TENANT_ID:   ${APP_TENANT_ID}
+      APP_TENANT_SLUG: ${APP_TENANT_SLUG:-}
+      TENANT_API_TOKEN: ${TENANT_API_TOKEN}
+      PLATFORM_API_URL: http://api
+      DB_CONNECTION: sqlite
+      BROADCAST_CONNECTION: pusher
+      PUSHER_APP_KEY: ${PUSHER_APP_KEY}
+      PUSHER_HOST:    soketi
+      PUSHER_PORT:    6001
+      PUSHER_SCHEME:  http
+      PUSHER_APP_CLUSTER: mt1
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+      LOG_CHANNEL: stderr
+    volumes:
+      - /mnt/hosting/tad/track-any-device/volumes/server_tenant_db:/var/www/html/database
+    deploy:
+      <<: *deploy-storage
+      resources: *res-small
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=traefik-net"
+        - "traefik.http.services.tad-tracker.loadbalancer.server.port=80"
+        - "traefik.http.routers.tad-tracker.rule=Host(`${TRACKER_HOST}`)"
+        - "traefik.http.routers.tad-tracker.entrypoints=websecure"
+        - "traefik.http.routers.tad-tracker.tls=true"
+        - "traefik.http.routers.tad-tracker.service=tad-tracker"
 
   # ── Scheduler (also the migration runner — pinned to storage node) ───────────
   cron:

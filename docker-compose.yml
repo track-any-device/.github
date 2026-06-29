@@ -20,7 +20,7 @@
 #   Service                Image                                    Latest tag
 #   ─────────────────────  ───────────────────────────────────────  ──────────────────────
 #   server-api             trackanydevice/server-api                v0.1.424-ac19c5e0
-#   server-tenant          trackanydevice/server-tenant             (see below)
+#   server-tenant          trackanydevice/server-tenant             latest  (public tracker)
 #   server-cron            trackanydevice/server-cron               (same as server-api)
 #   server-queue           trackanydevice/server-queue              (same as server-api)
 #   server-cli             trackanydevice/server-cli                (same as server-api)
@@ -29,9 +29,10 @@
 #   Third-party images are pinned below — upgrade intentionally, never blindly.
 #
 # Service map:
-#   api       → api.track-any-device.com         Central REST API server (Sanctum SMS-OTP auth)
-#   web       → track-any-device.com             Marketing site + "my" portal + admin UI
-#   jt808     → :7018 TCP                        JT808 GPS tracker endpoint
+#   api            → api.track-any-device.com    Central REST API server (Sanctum SMS-OTP auth)
+#   web            → track-any-device.com        Marketing site + "my" portal + admin UI
+#   server-tenant  → ${TRACKER_HOST} :80         Public current-state device tracker (SQLite)
+#   jt808          → :7018 TCP                    JT808 GPS tracker endpoint
 #   soketi    → :6001 WS                         Real-time WebSocket server
 #   mysql     → :3306                            Central database
 #   redis     → :6379                            Cache / queues / sessions
@@ -185,40 +186,57 @@ services:
       start_period: 30s
     restart: unless-stopped
 
-  # ── Per-tenant Portals ───────────────────────────────────────────────────────
+  # ── Public Current-State Tracker (server-tenant) ─────────────────────────────
   # Source: github.com/track-any-device/server-tenant
-  # One block per tenant. Uncomment and fill in values for each.
+  # Standalone PUBLIC tracker: anyone enters a device id and sees its latest
+  # position. SQLite-backed, current-state only (no history). Authenticates to
+  # the central api's /api/portal endpoints with the tenant's machine ACCESS KEY
+  # (Authorization: Bearer ${TENANT_API_TOKEN} + X-Tenant-Id: ${APP_TENANT_ID}).
+  # The Tenant ID + access key are generated/copied from the central admin
+  # org-details screen (/admin/organisations → rotate via
+  # POST /api/admin/tenants/{id}/key) and pasted into .env — there is no minting.
   #
-  # tenant_acme:
-  #   image: trackanydevice/server-tenant:latest
-  #   container_name: tenant_acme
-  #   networks: [tda]
-  #   restart: unless-stopped
-  #   environment:
-  #     APP_ENV: production
-  #     APP_KEY: <generate: php artisan key:generate --show>
-  #     APP_URL: https://acme.track-any-device.com
-  #     APP_SURFACE: tenant
-  #     APP_TENANT_SLUG: acme
-  #     APP_TENANT_ID: <tenant id>
-  #     APP_TENANT_API_KEY: <from Portal API Keys tab>
-  #     PLATFORM_API_URL: http://api
-  #     DB_CONNECTION: mysql
-  #     DB_HOST: mysql
-  #     DB_DATABASE: ${MYSQL_DATABASE}
-  #     DB_USERNAME: ${MYSQL_USER}
-  #     DB_PASSWORD: ${MYSQL_PASSWORD}
-  #     REDIS_HOST: redis
-  #     REDIS_PORT: 6379
-  #     SESSION_DRIVER: redis
-  #     SESSION_COOKIE: tenant_acme_session
-  #     PUSHER_APP_KEY: ${PUSHER_APP_KEY}
-  #     PUSHER_HOST: soketi
-  #     PUSHER_PORT: 6001
-  #     PUSHER_SCHEME: http
-  #   depends_on:
-  #     mysql:
-  #       condition: service_healthy
+  # ROUTING: serves on :80. Route the public hostname ${TRACKER_HOST} to
+  # server-tenant:80 in your Cloudflare Tunnel (Zero Trust → Networks → Tunnels
+  # → Public Hostnames): ${TRACKER_HOST} → http://server-tenant:80.
+  #
+  # SQLite persistence: the named volume server_tenant_db keeps the current-state
+  # DB across restarts. The container runs `php artisan migrate --force` on boot
+  # (it creates the schema in the empty volume on first run) before handing off
+  # to supervisord (nginx + php-fpm + tenant:listen-signals).
+  server-tenant:
+    image: trackanydevice/server-tenant:${TAD_SERVER_TENANT_TAG:-latest}
+    container_name: server-tenant
+    networks:
+      - tda
+    restart: unless-stopped
+    command: >
+      sh -c "php /var/www/html/artisan migrate --force &&
+             exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf"
+    environment:
+      APP_ENV: production
+      APP_KEY: ${TENANT_APP_KEY}
+      APP_URL: https://${TRACKER_HOST}
+      APP_TENANT_ID: ${APP_TENANT_ID}
+      APP_TENANT_SLUG: ${APP_TENANT_SLUG:-}
+      TENANT_API_TOKEN: ${TENANT_API_TOKEN}
+      PLATFORM_API_URL: http://api
+      DB_CONNECTION: sqlite
+      BROADCAST_CONNECTION: pusher
+      PUSHER_APP_KEY: ${PUSHER_APP_KEY}
+      PUSHER_HOST: soketi
+      PUSHER_PORT: 6001
+      PUSHER_SCHEME: http
+      PUSHER_APP_CLUSTER: mt1
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+      LOG_CHANNEL: stderr
+    volumes:
+      - server_tenant_db:/var/www/html/database
+    depends_on:
+      api:
+        condition: service_started
+      soketi:
+        condition: service_healthy
 
   # ── Infrastructure ───────────────────────────────────────────────────────────
 
@@ -396,3 +414,4 @@ volumes:
   influxdb_data:
   loki_data:
   grafana_data:
+  server_tenant_db:

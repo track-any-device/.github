@@ -51,12 +51,15 @@ Track Any Device is a SaaS fleet tracking platform for organisations that need t
                                                │ packages
          ┌─────────────────────────────────────┼────────────────────────────┐
          │                                      │                            │
-┌────────▼──────────┐                 (consumed by every server app via Composer)
-│  server-tenant    │
-│  Laravel 13       │
-│  Inertia + React  │
-│  {slug}.tad.com   │
-└───────────────────┘
+┌────────▼────────────────┐         (consumed by every server app via Composer)
+│  server-tenant          │
+│  PUBLIC device tracker  │
+│  Laravel 13 · SQLite    │
+│  Inertia + React        │
+│  ${TRACKER_HOST}         │
+│  reads central /api      │
+│  via tenant access key   │
+└─────────────────────────┘
 
   ┌──────────────────────────────────────────────────────────────────────────────────┐
   │  Protocol Gateway — Go 1.23 TCP/UDP servers → Redis Streams → Laravel consumers  │
@@ -105,7 +108,7 @@ and authentication is first-party Sanctum SMS-OTP.
 | Repository | Image | Purpose |
 |---|---|---|
 | [app](https://github.com/track-any-device/app) | `server-api` · `server-queue` · `server-cron` · `server-cli` | Pure API server — REST (mobile, my portal, tenant portal), queue, scheduler, CLI. First-party Sanctum SMS-OTP auth. No Inertia pages. |
-| [server-tenant](https://github.com/track-any-device/server-tenant) | `server-tenant` | Tenant operational portal — live map, incidents, beats, workflows |
+| [server-tenant](https://github.com/track-any-device/server-tenant) | `server-tenant` | Public current-state device tracker — no-login device-id lookup page + live map. Standalone (SQLite, no central DB); reads device state from the central API via a tenant access key |
 | [server-jt808](https://github.com/track-any-device/server-jt808) | `server-jt808` | Go TCP server for JT/T 808-2019 GPS devices |
 | [server-gt06](https://github.com/track-any-device/server-gt06) | `server-gt06` | Go TCP server for GT06/Concox binary GPS devices |
 | [server-h02](https://github.com/track-any-device/server-h02) | `server-h02-tcp` · `server-h02-udp` | Go TCP+UDP server for H02/Sinotrack ASCII GPS devices |
@@ -130,9 +133,19 @@ host/cloud firewall; trackers connect straight to a node IP.
 
 The committed `docker-compose.yml` is a reference single-host stack and declares only `jt808`
 among the Go protocol servers; `install.sh` regenerates a full `docker-compose.yml` with
-`jt808`, `gt06`, `h02-tcp` and `h02-udp`. Both paths run `api`, `cron`, `queue`, `cli`, plus
-infra (`mysql`, `redis`, `soketi`, `influxdb`, mail, `pma`); logging (`loki`/`promtail`/`grafana`)
-and `frpc` are profile-gated.
+`jt808`, `gt06`, `h02-tcp` and `h02-udp`. Both paths run `api`, `cron`, `queue`, `cli`,
+`server-tenant`, plus infra (`mysql`, `redis`, `soketi`, `influxdb`, mail, `pma`); logging
+(`loki`/`promtail`/`grafana`) and `frpc` are profile-gated.
+
+`server-tenant` is the **public current-state tracker** (image `trackanydevice/server-tenant`,
+serves on `:80`, SQLite). It connects to the central `api` over the `tda`/`tad` network using the
+tenant's machine **access key** — generated/copied from the central admin org-details screen
+(`/admin/organisations`): `APP_TENANT_ID` → `X-Tenant-Id` and `TENANT_API_TOKEN` (a `tk_…` key)
+→ `Authorization: Bearer`. The operator pastes both at install time (the tracker is deployed even
+if left blank, but won't sync until they're set). Route the public hostname `TRACKER_HOST` to it:
+on the Compose path, map `TRACKER_HOST → http://server-tenant:80` in the Cloudflare Tunnel; on the
+Swarm path, Traefik routes `Host(TRACKER_HOST) → :80`. Its SQLite DB persists in a dedicated
+volume and migrations run on container boot.
 
 ---
 

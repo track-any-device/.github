@@ -234,6 +234,13 @@ detect_existing_env() {
   CFG_INFLUX_TOKEN="${INFLUXDB_TOKEN:-}"
   CFG_PASSPORT_PRIVATE="${PASSPORT_PRIVATE_KEY_B64:-}"
   CFG_PASSPORT_PUBLIC="${PASSPORT_PUBLIC_KEY_B64:-}"
+  # ── Public current-state tracker (server-tenant) ──
+  CFG_TRACKER_HOST="${TRACKER_HOST:-}"
+  CFG_TENANT_APP_KEY="${TENANT_APP_KEY:-}"
+  CFG_APP_TENANT_ID="${APP_TENANT_ID:-}"
+  CFG_APP_TENANT_SLUG="${APP_TENANT_SLUG:-}"
+  CFG_TENANT_API_TOKEN="${TENANT_API_TOKEN:-}"
+  CFG_GOOGLE_MAPS_API_KEY="${GOOGLE_MAPS_API_KEY:-}"
 
   HAVE_EXISTING_ENV=true
   ok "Existing configuration loaded — all secrets and settings will be reused"
@@ -258,6 +265,8 @@ collect_config() {
     echo ""
     # Generate only secrets that are missing from the old .env
     [[ -z "${CFG_API_KEY:-}"         ]] && CFG_API_KEY=$(gen_app_key)     && ok "API app key (generated)"
+    [[ -z "${CFG_TENANT_APP_KEY:-}"  ]] && CFG_TENANT_APP_KEY=$(gen_app_key) && ok "Public tracker app key (generated)"
+    [[ -z "${CFG_TRACKER_HOST:-}"    ]] && CFG_TRACKER_HOST="track.${CFG_DOMAIN}"
     [[ -z "${CFG_PUSHER_ID:-}"       ]] && CFG_PUSHER_ID=$(gen_pusher_id)
     [[ -z "${CFG_PUSHER_KEY:-}"      ]] && CFG_PUSHER_KEY=$(gen_hex)
     [[ -z "${CFG_PUSHER_SECRET:-}"   ]] && CFG_PUSHER_SECRET=$(gen_hex)
@@ -338,12 +347,28 @@ collect_config() {
     CFG_SMS_NUMBER=$(ask "SMS master number (e.g. +92300000000)")
   fi
 
+  # ── Public current-state tracker (server-tenant) ──────────────────────────
+  # A standalone public page where anyone enters a device id and sees its
+  # latest position. It connects to the central api with the tenant's machine
+  # ACCESS KEY (Tenant ID + tk_… key) — generate/copy both from the admin
+  # org-details screen (/admin/organisations). Leave the ID/key blank for now
+  # and fill them in later if you don't have them yet (the tracker just won't
+  # sync until they're set).
+  echo ""
+  dim "  Public current-state tracker (server-tenant) — optional:"
+  CFG_TRACKER_HOST=$(ask "Public tracker hostname" "track.${CFG_DOMAIN}")
+  CFG_APP_TENANT_ID=$(ask "Public tenant ID (from /admin organisations → the org's X-Tenant-Id)")
+  CFG_TENANT_API_TOKEN=$(ask "Public tenant access key (tk_… — Authorization: Bearer from the org screen)")
+  CFG_APP_TENANT_SLUG=$(ask "Public tenant slug (optional)")
+  CFG_GOOGLE_MAPS_API_KEY=$(ask "Google Maps API key for the tracker map (blank to skip)")
+
   echo ""
   echo -e "${BOLD}── Step 4/4 — Generating secrets ───────────────────────────────${RESET}"
   echo ""
 
   # App encryption keys
-  CFG_API_KEY=$(gen_app_key);     ok "API app key"
+  CFG_API_KEY=$(gen_app_key);        ok "API app key"
+  CFG_TENANT_APP_KEY=$(gen_app_key); ok "Public tracker app key"
 
   # Pusher / Soketi
   CFG_PUSHER_ID=$(gen_pusher_id)
@@ -415,6 +440,25 @@ SESSION_DOMAIN=.${CFG_DOMAIN}
 
 # ── App encryption keys ───────────────────────────────────────────────────────
 API_APP_KEY=${CFG_API_KEY}
+
+# ── Public current-state tracker (server-tenant) ──────────────────────────────
+# Standalone PUBLIC device tracker (image trackanydevice/server-tenant, SQLite).
+# Routing: ${CFG_TRACKER_HOST:-track.${CFG_DOMAIN}} must be routed to
+# server-tenant:80 in your Cloudflare Tunnel (Zero Trust → Networks → Tunnels →
+# Public Hostnames).
+#
+# APP_TENANT_ID + TENANT_API_TOKEN are GENERATED/COPIED from the central admin
+# org-details screen (/admin/organisations → rotate via
+# POST /api/admin/tenants/{id}/key). APP_TENANT_ID → X-Tenant-Id header;
+# TENANT_API_TOKEN (tk_…) → Authorization: Bearer. There is no minting here.
+# Leave the ID/token blank to start; the tracker just won't sync until both
+# are filled in (re-run install.sh or edit this file, then restart the service).
+TRACKER_HOST=${CFG_TRACKER_HOST:-track.${CFG_DOMAIN}}
+TENANT_APP_KEY=${CFG_TENANT_APP_KEY}
+APP_TENANT_ID=${CFG_APP_TENANT_ID:-}
+APP_TENANT_SLUG=${CFG_APP_TENANT_SLUG:-}
+TENANT_API_TOKEN=${CFG_TENANT_API_TOKEN:-}
+GOOGLE_MAPS_API_KEY=${CFG_GOOGLE_MAPS_API_KEY:-}
 
 # ── Database ──────────────────────────────────────────────────────────────────
 MYSQL_ROOT_PASSWORD=${CFG_MYSQL_ROOT_PASS}
@@ -893,6 +937,52 @@ services:
   # Configure env vars via wrangler.toml or Cloudflare Pages dashboard.
   # Cloudflare Pages handles track-any-device.com directly; no tunnel needed.
 
+  # ── Public Current-State Tracker (server-tenant) ─────────────────────────────
+  # Standalone PUBLIC device tracker (SQLite, current-state only). Authenticates
+  # to the central api's /api/portal endpoints with the tenant's machine ACCESS
+  # KEY: Authorization: Bearer \${TENANT_API_TOKEN} + X-Tenant-Id: \${APP_TENANT_ID}.
+  # Generate/copy the Tenant ID + access key from the admin org-details screen
+  # (/admin/organisations → rotate via POST /api/admin/tenants/{id}/key).
+  #
+  # ROUTING (Cloudflare Tunnel): this serves on :80 inside the tda network. In
+  # Zero Trust → Networks → Tunnels → Public Hostnames add:
+  #     \${TRACKER_HOST}  →  http://server-tenant:80
+  #
+  # SQLite persistence: the named volume server_tenant_db keeps the current-state
+  # DB across restarts. The container runs migrate --force on boot (creating the
+  # schema in an empty volume on first run) before starting supervisord
+  # (nginx + php-fpm + tenant:listen-signals).
+  server-tenant:
+    image: ${ORG}/server-tenant:\${TAD_SERVER_TENANT_TAG:-latest}
+    container_name: server-tenant
+    networks: [tda]
+    restart: unless-stopped
+    command: >
+      sh -c "php /var/www/html/artisan migrate --force &&
+             exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf"
+    depends_on:
+      api:    {condition: service_started}
+      soketi: {condition: service_healthy}
+    environment:
+      APP_ENV: production
+      APP_KEY: \${TENANT_APP_KEY}
+      APP_URL: https://\${TRACKER_HOST}
+      APP_TENANT_ID:   \${APP_TENANT_ID}
+      APP_TENANT_SLUG: \${APP_TENANT_SLUG:-}
+      TENANT_API_TOKEN: \${TENANT_API_TOKEN}
+      PLATFORM_API_URL: http://api
+      DB_CONNECTION: sqlite
+      BROADCAST_CONNECTION: pusher
+      PUSHER_APP_KEY: \${PUSHER_APP_KEY}
+      PUSHER_HOST:    soketi
+      PUSHER_PORT:    6001
+      PUSHER_SCHEME:  http
+      PUSHER_APP_CLUSTER: mt1
+      GOOGLE_MAPS_API_KEY: \${GOOGLE_MAPS_API_KEY:-}
+      LOG_CHANNEL: stderr
+    volumes:
+      - server_tenant_db:/var/www/html/database
+
   cron:
     <<: *app-base
     image: ${ORG}/server-cron:latest
@@ -1205,6 +1295,7 @@ volumes:
   influxdb_data:
   loki_data:
   grafana_data:
+  server_tenant_db:
 COMPOSE
 
   ok "docker-compose.yml generated"
@@ -1237,6 +1328,18 @@ patch_env() {
   _ensure_var "SMS_GATEWAY_URL"    ""
   _ensure_var "SMS_GATEWAY_API_KEY" ""
   _ensure_var "SMS_MASTER_NUMBER"  ""
+
+  # ── Public current-state tracker (server-tenant) ──
+  # Added for existing installs. TRACKER_HOST defaults to track.<APP_DOMAIN>;
+  # TENANT_APP_KEY is generated. APP_TENANT_ID/TENANT_API_TOKEN are left blank
+  # for the operator to paste from /admin organisations — the tracker won't
+  # sync until both are filled in.
+  _ensure_var "TRACKER_HOST"       "track.${APP_DOMAIN:-track-any-device.com}"
+  _ensure_var "TENANT_APP_KEY"     "$(gen_app_key)"
+  _ensure_var "APP_TENANT_ID"      ""
+  _ensure_var "APP_TENANT_SLUG"    ""
+  _ensure_var "TENANT_API_TOKEN"   ""
+  _ensure_var "GOOGLE_MAPS_API_KEY" ""
 
   $patched && log "New protocol env vars added to ${env_file}"
   return 0
@@ -1336,8 +1439,21 @@ show_status() {
   echo -e "${BOLD}── Access ──────────────────────────────────────────────────────${RESET}"
   echo "  Web + My portal: https://${APP_DOMAIN:-track-any-device.com}  (Cloudflare Pages)"
   echo "  API:             https://api.${APP_DOMAIN:-track-any-device.com}"
+  echo "  Public tracker:  https://${TRACKER_HOST:-track.${APP_DOMAIN:-track-any-device.com}}  (server-tenant :80)"
   echo "  phpMyAdmin:      http://localhost:3333"
   echo "  MailPit:         http://localhost:8025"
+  echo ""
+  echo -e "${BOLD}── Public tracker (server-tenant) ──────────────────────────────${RESET}"
+  echo "  MANUAL: route ${TRACKER_HOST:-track.${APP_DOMAIN:-track-any-device.com}} → http://server-tenant:80"
+  echo "          in Cloudflare Zero Trust → Networks → Tunnels → Public Hostnames."
+  if [[ -z "${APP_TENANT_ID:-}" || -z "${TENANT_API_TOKEN:-}" ]]; then
+    warn "Tenant ID / access key not set — the tracker is deployed but will NOT"
+    warn "  sync or connect yet. Paste both from /admin organisations (X-Tenant-Id"
+    warn "  + tk_… access key) into ${INSTALL_DIR}/.env (APP_TENANT_ID,"
+    warn "  TENANT_API_TOKEN), then: docker compose -f '${compose}' up -d server-tenant"
+  else
+    ok "Tenant ID + access key configured — the tracker will sync from the central API."
+  fi
   echo ""
   local jt808_host="${JT808_HOST:-${APP_DOMAIN:-<your-domain>}}"
   local jt808_port="${JT808_PORT:-7018}"
@@ -1404,9 +1520,14 @@ main() {
     echo "  ✓ Installation complete!"
     echo -e "${RESET}"
     echo "  Next steps:"
-    echo "    1. Add Cloudflare Tunnel public hostnames (if not already done)"
+    echo "    1. Add Cloudflare Tunnel public hostnames (if not already done) —"
+    echo "       including ${TRACKER_HOST:-track.${CFG_DOMAIN}} → http://server-tenant:80"
+    echo "       for the public current-state tracker."
     echo "    2. Open the web app → sign in with SMS-OTP and onboard your account"
-    echo "    3. For GPS tracking: JT808→:7018  GT06→:7019  H02→:7020(tcp)/:7021(udp)"
+    echo "    3. Public tracker: copy the Tenant ID (X-Tenant-Id) + access key (tk_…)"
+    echo "       from /admin organisations into .env (APP_TENANT_ID, TENANT_API_TOKEN),"
+    echo "       then: docker compose up -d server-tenant"
+    echo "    4. For GPS tracking: JT808→:7018  GT06→:7019  H02→:7020(tcp)/:7021(udp)"
     echo ""
     echo "  Config saved to: ${INSTALL_DIR}/.env"
     echo "  Update later:    bash ${INSTALL_DIR}/install.sh --update"
