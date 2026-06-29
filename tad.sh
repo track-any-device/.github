@@ -153,6 +153,7 @@ fetch_versions() {
   echo ""
   echo -e "${BOLD}── Resolved versions ───────────────────────────────────────────${RESET}"
   printf "  %-18s %s\n" "server-api:"      "${TAD_SERVER_API_TAG}"
+  printf "  %-18s %s\n" "server-tenant:"   "${TAD_SERVER_TENANT_TAG}"
   printf "  %-18s %s\n" "jt808-server:"    "${TAD_JT808_TAG}"
   printf "  %-18s %s\n" "gt06-server:"     "${TAD_GT06_TAG}"
   printf "  %-18s %s\n" "h02-server:"      "${TAD_H02_TAG}"
@@ -299,6 +300,13 @@ detect_existing_env() {
   CFG_INFLUX_TOKEN="${INFLUXDB_TOKEN:-}"
   CFG_PASSPORT_PRIVATE="${PASSPORT_PRIVATE_KEY_B64:-}"
   CFG_PASSPORT_PUBLIC="${PASSPORT_PUBLIC_KEY_B64:-}"
+  # ── Public current-state tracker (server-tenant) ──
+  CFG_TRACKER_HOST="${TRACKER_HOST:-}"
+  CFG_TENANT_APP_KEY="${TENANT_APP_KEY:-}"
+  CFG_APP_TENANT_ID="${APP_TENANT_ID:-}"
+  CFG_APP_TENANT_SLUG="${APP_TENANT_SLUG:-}"
+  CFG_TENANT_API_TOKEN="${TENANT_API_TOKEN:-}"
+  CFG_GOOGLE_MAPS_API_KEY="${GOOGLE_MAPS_API_KEY:-}"
 
   HAVE_EXISTING_ENV=true
   ok "Existing configuration loaded — all secrets and settings will be reused"
@@ -316,6 +324,8 @@ collect_config() {
     echo "  SMS URL:     ${CFG_SMS_URL:-(not configured)}"
     echo ""
     [[ -z "${CFG_API_KEY:-}"       ]] && CFG_API_KEY=$(gen_app_key)     && ok "API app key (generated)"
+    [[ -z "${CFG_TENANT_APP_KEY:-}" ]] && CFG_TENANT_APP_KEY=$(gen_app_key) && ok "Public tracker app key (generated)"
+    [[ -z "${CFG_TRACKER_HOST:-}"  ]] && CFG_TRACKER_HOST="track.${CFG_DOMAIN}"
     [[ -z "${CFG_PUSHER_ID:-}"     ]] && CFG_PUSHER_ID=$(gen_pusher_id)
     [[ -z "${CFG_PUSHER_KEY:-}"    ]] && CFG_PUSHER_KEY=$(gen_hex)
     [[ -z "${CFG_PUSHER_SECRET:-}" ]] && CFG_PUSHER_SECRET=$(gen_hex)
@@ -388,10 +398,24 @@ collect_config() {
     CFG_SMS_NUMBER=$(ask "SMS master number (e.g. +92300000000)")
   fi
 
+  # ── Public current-state tracker (server-tenant) ──────────────────────────
+  # Standalone public page; connects to the central api with the tenant's
+  # machine ACCESS KEY (Tenant ID + tk_… key) generated/copied from /admin
+  # organisations. Your Traefik routes Host(${TRACKER_HOST:-track.<domain>}) → :80.
+  # Leave the ID/key blank to start; the tracker just won't sync until both set.
+  echo ""
+  dim "  Public current-state tracker (server-tenant) — optional:"
+  CFG_TRACKER_HOST=$(ask "Public tracker hostname" "track.${CFG_DOMAIN}")
+  CFG_APP_TENANT_ID=$(ask "Public tenant ID (from /admin organisations → the org's X-Tenant-Id)")
+  CFG_TENANT_API_TOKEN=$(ask "Public tenant access key (tk_… — Authorization: Bearer from the org screen)")
+  CFG_APP_TENANT_SLUG=$(ask "Public tenant slug (optional)")
+  CFG_GOOGLE_MAPS_API_KEY=$(ask "Google Maps API key for the tracker map (blank to skip)")
+
   echo ""
   echo -e "${BOLD}── Step 4/4 — Generating secrets ───────────────────────────────${RESET}"
   echo ""
-  CFG_API_KEY=$(gen_app_key);     ok "API app key"
+  CFG_API_KEY=$(gen_app_key);        ok "API app key"
+  CFG_TENANT_APP_KEY=$(gen_app_key); ok "Public tracker app key"
   CFG_PUSHER_ID=$(gen_pusher_id)
   CFG_PUSHER_KEY=$(gen_hex)
   CFG_PUSHER_SECRET=$(gen_hex)
@@ -456,6 +480,23 @@ SWARM_HOST_DOMAIN=${CFG_SWARM_HOST_DOMAIN}
 
 # ── App encryption keys ───────────────────────────────────────────────────────
 API_APP_KEY=${CFG_API_KEY}
+
+# ── Public current-state tracker (server-tenant) ──────────────────────────────
+# Standalone PUBLIC device tracker (image trackanydevice/server-tenant, SQLite).
+# Routing: your Traefik routes Host(${CFG_TRACKER_HOST:-track.${CFG_DOMAIN}}) → :80.
+#
+# APP_TENANT_ID + TENANT_API_TOKEN are GENERATED/COPIED from the central admin
+# org-details screen (/admin organisations → rotate via
+# POST /api/admin/tenants/{id}/key). APP_TENANT_ID → X-Tenant-Id header;
+# TENANT_API_TOKEN (tk_…) → Authorization: Bearer. There is no minting here.
+# Leave the ID/token blank to start; the tracker just won't sync until both
+# are filled in (edit this file, then redeploy: bash tad.sh --update).
+TRACKER_HOST=${CFG_TRACKER_HOST:-track.${CFG_DOMAIN}}
+TENANT_APP_KEY=${CFG_TENANT_APP_KEY}
+APP_TENANT_ID=${CFG_APP_TENANT_ID:-}
+APP_TENANT_SLUG=${CFG_APP_TENANT_SLUG:-}
+TENANT_API_TOKEN=${CFG_TENANT_API_TOKEN:-}
+GOOGLE_MAPS_API_KEY=${CFG_GOOGLE_MAPS_API_KEY:-}
 
 # ── Database ──────────────────────────────────────────────────────────────────
 MYSQL_ROOT_PASSWORD=${CFG_MYSQL_ROOT_PASS}
@@ -529,6 +570,18 @@ patch_env() {
   _ensure_var "SMS_GATEWAY_API_KEY" ""
   _ensure_var "SMS_MASTER_NUMBER" ""
 
+  # ── Public current-state tracker (server-tenant) ──
+  # Added for existing deploys. TRACKER_HOST defaults to track.<APP_DOMAIN>;
+  # TENANT_APP_KEY is generated. APP_TENANT_ID/TENANT_API_TOKEN are left blank
+  # for the operator to paste from /admin organisations — the tracker won't
+  # sync until both are filled in.
+  _ensure_var "TRACKER_HOST"      "track.${APP_DOMAIN:-track-any-device.com}"
+  _ensure_var "TENANT_APP_KEY"    "$(gen_app_key)"
+  _ensure_var "APP_TENANT_ID"     ""
+  _ensure_var "APP_TENANT_SLUG"   ""
+  _ensure_var "TENANT_API_TOKEN"  ""
+  _ensure_var "GOOGLE_MAPS_API_KEY" ""
+
   $patched && log "New env vars added to ${env_file}"
   return 0
 }
@@ -540,6 +593,7 @@ create_directories() {
   run "mkdir -p '${INSTALL_DIR}/volumes/mysql'"
   run "mkdir -p '${INSTALL_DIR}/volumes/influxdb'"
   run "mkdir -p '${INSTALL_DIR}/volumes/app_storage'"
+  run "mkdir -p '${INSTALL_DIR}/volumes/server_tenant_db'"
   if ! $DRY_RUN; then
     chmod -R 775 "${INSTALL_DIR}/volumes" 2>/dev/null || true
   fi
@@ -659,6 +713,58 @@ services:
         - "traefik.http.routers.tad-api.entrypoints=websecure"
         - "traefik.http.routers.tad-api.tls=true"
         - "traefik.http.routers.tad-api.service=tad-api"
+
+  # ── Public Current-State Tracker (server-tenant) ─────────────────────────────
+  # Standalone PUBLIC device tracker (image trackanydevice/server-tenant, SQLite,
+  # current-state only). Authenticates to the central api's /api/portal endpoints
+  # with the tenant's machine ACCESS KEY: Authorization: Bearer \${TENANT_API_TOKEN}
+  # + X-Tenant-Id: \${APP_TENANT_ID}. Generate/copy the Tenant ID + access key from
+  # the admin org-details screen (/admin organisations → rotate via
+  # POST /api/admin/tenants/{id}/key) — there is no minting here.
+  #
+  # ROUTING: your existing Traefik publishes it on Host(\`\${TRACKER_HOST}\`) → :80,
+  # mirroring the api router's tls/entrypoint labels.
+  #
+  # SQLite persistence: pinned to the storage node with a local bind volume so the
+  # current-state DB survives restarts. Runs migrate --force on boot (creating the
+  # schema in an empty volume on first run) before starting supervisord
+  # (nginx + php-fpm + tenant:listen-signals).
+  server-tenant:
+    image: ${ORG}/server-tenant:\${TAD_SERVER_TENANT_TAG:-latest}
+    networks: [tad, traefik-net]
+    command: >
+      sh -c "php /var/www/html/artisan migrate --force &&
+             exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf"
+    environment:
+      APP_ENV: production
+      APP_KEY: \${TENANT_APP_KEY}
+      APP_URL: https://\${TRACKER_HOST}
+      APP_TENANT_ID:   \${APP_TENANT_ID}
+      APP_TENANT_SLUG: \${APP_TENANT_SLUG:-}
+      TENANT_API_TOKEN: \${TENANT_API_TOKEN}
+      PLATFORM_API_URL: http://api
+      DB_CONNECTION: sqlite
+      BROADCAST_CONNECTION: pusher
+      PUSHER_APP_KEY: \${PUSHER_APP_KEY}
+      PUSHER_HOST:    soketi
+      PUSHER_PORT:    6001
+      PUSHER_SCHEME:  http
+      PUSHER_APP_CLUSTER: mt1
+      GOOGLE_MAPS_API_KEY: \${GOOGLE_MAPS_API_KEY:-}
+      LOG_CHANNEL: stderr
+    volumes:
+      - ${INSTALL_DIR}/volumes/server_tenant_db:/var/www/html/database
+    deploy:
+      <<: *deploy-storage
+      resources: *res-small
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NET}"
+        - "traefik.http.services.tad-tracker.loadbalancer.server.port=80"
+        - "traefik.http.routers.tad-tracker.rule=Host(\`\${TRACKER_HOST}\`)"
+        - "traefik.http.routers.tad-tracker.entrypoints=websecure"
+        - "traefik.http.routers.tad-tracker.tls=true"
+        - "traefik.http.routers.tad-tracker.service=tad-tracker"
 
   # ── Scheduler (also the migration runner — pinned to storage node) ───────────
   cron:
@@ -1018,6 +1124,7 @@ show_status() {
   echo ""
   echo -e "${BOLD}── Versions ────────────────────────────────────────────────────${RESET}"
   echo "  server-api:      ${TAD_SERVER_API_TAG}"
+  echo "  server-tenant:   ${TAD_SERVER_TENANT_TAG}"
   echo "  jt808:           ${TAD_JT808_TAG}"
   echo "  gt06:            ${TAD_GT06_TAG}"
   echo "  h02:             ${TAD_H02_TAG}"
@@ -1026,8 +1133,21 @@ show_status() {
   echo -e "${BOLD}── Access (routed by your Traefik on ${TRAEFIK_NET}) ─────────────${RESET}"
   echo "  REST API:     https://api.${APP_DOMAIN:-track-any-device.com}     | https://api-tad.${shd}"
   echo "  Realtime WS:  https://ws.${APP_DOMAIN:-track-any-device.com}      | https://ws-tad.${shd}"
+  echo "  Public track: https://${TRACKER_HOST:-track.${APP_DOMAIN:-track-any-device.com}}  (server-tenant :80)"
   echo "  phpMyAdmin:   http://<node-ip>:3333"
   echo "  MailPit:      http://<node-ip>:8025"
+  echo ""
+  echo -e "${BOLD}── Public tracker (server-tenant) ──────────────────────────────${RESET}"
+  echo "  Routed by your Traefik: Host(${TRACKER_HOST:-track.${APP_DOMAIN:-track-any-device.com}}) → :80"
+  echo "  Point DNS for that host at your Traefik node(s)."
+  if [[ -z "${APP_TENANT_ID:-}" || -z "${TENANT_API_TOKEN:-}" ]]; then
+    warn "Tenant ID / access key not set — the tracker is deployed but will NOT"
+    warn "  sync or connect yet. Paste both from /admin organisations (X-Tenant-Id"
+    warn "  + tk_… access key) into ${ENV_FILE} (APP_TENANT_ID, TENANT_API_TOKEN),"
+    warn "  then redeploy: bash tad.sh --update"
+  else
+    ok "Tenant ID + access key configured — the tracker will sync from the central API."
+  fi
   echo ""
   local jt808_host="${JT808_HOST:-${APP_DOMAIN:-<your-domain>}}"
   echo -e "${BOLD}── Protocol Gateway Endpoints (direct Swarm ports) ─────────────${RESET}"
@@ -1079,9 +1199,13 @@ main() {
     echo -e "${RESET}"
     echo "  Next steps:"
     echo "    1. Ensure your Traefik is attached to the '${TRAEFIK_NET}' network so it"
-    echo "       can route the tad-* routers (api/ws)."
-    echo "    2. Point DNS (real domains + *-tad.${CFG_SWARM_HOST_DOMAIN:-host-swarm.net})"
+    echo "       can route the tad-* routers (api/ws/tracker)."
+    echo "    2. Point DNS (real domains + *-tad.${CFG_SWARM_HOST_DOMAIN:-host-swarm.net}"
+    echo "       + the public tracker ${CFG_TRACKER_HOST:-track.${CFG_DOMAIN}})"
     echo "       at the node(s) where your Traefik publishes :443."
+    echo "       Public tracker: copy the Tenant ID (X-Tenant-Id) + access key (tk_…)"
+    echo "       from /admin organisations into ${ENV_FILE}"
+    echo "       (APP_TENANT_ID, TENANT_API_TOKEN), then: bash tad.sh --update"
     echo "    3. Add worker nodes with the 'docker swarm join' command shown above."
     echo "    4. Open the device protocol ports in your host/cloud firewall so trackers"
     echo "       can reach them directly: 7018/tcp (JT808), 7019/tcp (GT06),"
