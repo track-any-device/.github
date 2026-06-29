@@ -274,7 +274,7 @@ detect_existing_env() {
   log "Loading existing configuration from ${env_file}..."
   set -a; source "$env_file" 2>/dev/null || true; set +a
 
-  CFG_DOMAIN="${APP_DOMAIN:-}"
+  CFG_DOMAIN="${APP_DOMAIN:-}"; CFG_DOMAIN="${CFG_DOMAIN#api.}"  # tolerate a stale APP_DOMAIN that already includes api.
   CFG_SCHEME="https"
   CFG_MYSQL_DB="${MYSQL_DATABASE:-tad}"
   CFG_MYSQL_USER="${MYSQL_USER:-tad}"
@@ -338,6 +338,9 @@ collect_config() {
   echo -e "${BOLD}── Step 1/4 — Domains & ingress ────────────────────────────────${RESET}"
   echo ""
   CFG_DOMAIN=$(ask "Main domain" "track-any-device.com")
+  # The API host is derived as api.${CFG_DOMAIN}; strip a leading "api." the user may have typed
+  # (e.g. api.track-any-device.com → track-any-device.com) so APP_URL never doubles to api.api.*.
+  CFG_DOMAIN="${CFG_DOMAIN#api.}"
   CFG_SCHEME="https"
   CFG_SWARM_HOST_DOMAIN=$(ask "Swarm host domain (for *-tad.<domain> router hostnames)" "host-swarm.net")
 
