@@ -1,8 +1,8 @@
-name: Bump version in install.sh
+name: Bump version in install.sh + tad.sh
 
 # Called by server app release workflows after a successful Docker image push.
-# Updates the version variable in install.sh so the next install.sh run
-# deploys the latest image.
+# Updates the version variable in BOTH install.sh (Compose installer) and tad.sh
+# (Swarm installer) so the next run of either deploys the latest image.
 #
 # Required org secret: ORG_GITHUB_TOKEN with contents:write on .github repo.
 
@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       service:
-        description: 'Service key in install.sh (TAD_SERVER_API_TAG, TAD_SERVER_TENANT_TAG, TAD_SERVER_WEB_TAG, TAD_JT808_TAG, TAD_GT06_TAG, TAD_H02_TAG)'
+        description: 'Service key in install.sh + tad.sh (TAD_SERVER_API_TAG, TAD_SERVER_TENANT_TAG, TAD_SERVER_WEB_TAG, TAD_JT808_TAG, TAD_GT06_TAG, TAD_H02_TAG)'
         required: true
         type: choice
         options:
@@ -42,7 +42,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Update version in install.sh
+      - name: Update version in install.sh + tad.sh
         env:
           SERVICE: ${{ inputs.service }}
           VERSION: ${{ inputs.version }}
@@ -51,21 +51,31 @@ jobs:
           # removed from the platform. Reject any attempt to bump them.
           case "${SERVICE}" in
             TAD_SERVER_LOGIN_TAG|TAD_SERVER_ADMIN_TAG|TAD_SERVER_GRAPHQL_TAG)
-              echo "::error::${SERVICE} is retired and no longer exists in install.sh"
+              echo "::error::${SERVICE} is retired and no longer exists in the installers"
               exit 1
               ;;
           esac
 
-          if ! grep -q "${SERVICE}=" install.sh; then
-            echo "::error::${SERVICE} not found in install.sh"
+          # Bump the tag in BOTH installers — install.sh (Compose) and tad.sh (Swarm).
+          # A service may not appear in every installer, so update each file only where
+          # the key exists; error only if it's in neither.
+          updated=""
+          for f in install.sh tad.sh; do
+            if grep -q "${SERVICE}=" "$f"; then
+              sed -i "s|${SERVICE}=\"[^\"]*\"|${SERVICE}=\"${VERSION}\"|g" "$f"
+              git add "$f"
+              updated="${updated} $f"
+            fi
+          done
+
+          if [ -z "${updated}" ]; then
+            echo "::error::${SERVICE} not found in install.sh or tad.sh"
             exit 1
           fi
-
-          sed -i "s|${SERVICE}=\"[^\"]*\"|${SERVICE}=\"${VERSION}\"|g" install.sh
+          echo "Updated:${updated}"
 
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add install.sh
 
           if git diff --staged --quiet; then
             echo "Version already up to date — no commit needed."
@@ -76,7 +86,7 @@ jobs:
 
       - name: Summary
         run: |
-          echo "### install.sh updated" >> "$GITHUB_STEP_SUMMARY"
+          echo "### install.sh + tad.sh updated" >> "$GITHUB_STEP_SUMMARY"
           echo "| Key | Value |" >> "$GITHUB_STEP_SUMMARY"
           echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
           echo "| Service | \`${{ inputs.service }}\` |" >> "$GITHUB_STEP_SUMMARY"
