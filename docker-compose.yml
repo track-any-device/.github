@@ -60,6 +60,10 @@ x-app-environment: &app-environment
   SESSION_DOMAIN:  ${SESSION_DOMAIN:-.track-any-device.com}
   APP_DOMAIN:      ${APP_DOMAIN:-track-any-device.com}
   MY_DOMAIN:       ${MY_DOMAIN:-track-any-device.com}
+  # APP_URL must be set on EVERY app container, not just `api` — the cron/queue/cli workers build
+  # SMS short links (IncidentSmsService → ShortLink) and without it config('app.url') defaults to
+  # http://localhost, so SMS links point at localhost. The api service overrides with the same value.
+  APP_URL:         https://api.${APP_DOMAIN:-track-any-device.com}
   DB_CONNECTION: mysql
   DB_HOST:       mysql
   DB_PORT:       3306
