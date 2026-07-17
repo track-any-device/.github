@@ -75,6 +75,9 @@ x-app-environment: &app-environment
   SESSION_DRIVER:   redis
   REDIS_HOST:       redis
   REDIS_PORT:       6379
+  STREAM_REDIS_HOST: ${STREAM_REDIS_HOST:-redis}
+  STREAM_REDIS_PORT: 6379
+  DEVICE_SNAPSHOT_WRITE_BEHIND: ${DEVICE_SNAPSHOT_WRITE_BEHIND:-true}
   BROADCAST_CONNECTION: pusher
   PUSHER_APP_ID:     ${PUSHER_APP_ID}
   PUSHER_APP_KEY:    ${PUSHER_APP_KEY}
@@ -92,6 +95,8 @@ x-app-environment: &app-environment
   INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-device_locations}
   INFLUXDB_ORG:    ${INFLUXDB_ORG:-track-any-device}
   INFLUXDB_TOKEN:  ${INFLUXDB_TOKEN}
+  INFLUXDB_RETENTION_DAYS:       ${INFLUXDB_RETENTION_DAYS:-90}
+  INFLUXDB_STORE_TENANT_HISTORY: ${INFLUXDB_STORE_TENANT_HISTORY:-false}
   PASSPORT_PRIVATE_KEY_B64: ${PASSPORT_PRIVATE_KEY_B64}
   PASSPORT_PUBLIC_KEY_B64:  ${PASSPORT_PUBLIC_KEY_B64}
 
@@ -159,10 +164,11 @@ services:
     environment:
       JT808_TCP_ADDR:    :7018
       JT808_HTTP_ADDR:   :9090
-      REDIS_HOST:        redis
+      REDIS_HOST:        ${STREAM_REDIS_HOST:-redis}
       REDIS_PORT:        6379
       STREAM_KEY:        jt808:telemetry
       STREAM_MAX_LEN:    100000
+      STREAM_SHARDS:     "${STREAM_SHARDS:-1}"
       SESSION_PREFIX:    "jt808:session:"
       AUTH_TOKEN_PREFIX: "jt808:authtoken:"
       ONLINE_Z_KEY:      jt808:online
@@ -286,7 +292,7 @@ services:
       SOKETI_DEFAULT_APP_SECRET: ${PUSHER_APP_SECRET}
       SOKETI_DEFAULT_APP_ENABLE_CLIENT_MESSAGES: 'true'
       SOKETI_DEFAULT_APP_ENABLED: 'true'
-      SOKETI_DEFAULT_APP_MAX_CONNECTIONS: '${SOKETI_MAX_CONNECTIONS:-500}'
+      SOKETI_DEFAULT_APP_MAX_CONNECTIONS: '${SOKETI_MAX_CONNECTIONS:-10000}'
       SOKETI_CORS_ALLOWED_ORIGINS: '*'
       SOKETI_DEFAULT_APP_WEBHOOKS: '[{"url":"http://api/api/v1/webhooks/soketi","event_types":["channel_occupied","channel_vacated"]}]'
     ports:
