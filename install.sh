@@ -478,6 +478,25 @@ INFLUXDB_ORG=track-any-device
 INFLUXDB_BUCKET=device_locations
 INFLUXDB_TOKEN=${CFG_INFLUX_TOKEN}
 
+# ── Scaling knobs ─────────────────────────────────────────────────────────────
+# Platform telemetry retention (days) — applied daily to the InfluxDB bucket by
+# influx:apply-retention. Tenant-device history is NOT stored centrally (it
+# lives in each tenant's fleet-management instance); flip the second knob only
+# if central copies are explicitly wanted.
+INFLUXDB_RETENTION_DAYS=90
+INFLUXDB_STORE_TENANT_HISTORY=false
+# Buffer per-signal device-row snapshot updates in Redis, flushed in batches
+# every ~2s (devices:flush-snapshots). Disable to restore per-signal UPDATEs.
+DEVICE_SNAPSHOT_WRITE_BEHIND=true
+# Shard the telemetry streams to {proto}:telemetry:0..N-1 (Go publishers +
+# matching consumer programs). Keep 1 on a single host.
+STREAM_SHARDS=1
+# Host of the Redis the telemetry streams live on (Go servers + consumers).
+# Single host: keep the shared instance.
+STREAM_REDIS_HOST=redis
+# Soketi websocket connection cap (browser maps + tenant listeners).
+SOKETI_MAX_CONNECTIONS=10000
+
 # ── Passport OAuth2 RSA keys ──────────────────────────────────────────────────
 # Generated at install time. Do not lose these — Passport tokens are signed
 # with the private key and verified with the public key.
@@ -892,6 +911,9 @@ x-app-env: &app-env
   SESSION_DRIVER:   redis
   REDIS_HOST: redis
   REDIS_PORT: 6379
+  STREAM_REDIS_HOST: \${STREAM_REDIS_HOST:-redis}
+  STREAM_REDIS_PORT: 6379
+  DEVICE_SNAPSHOT_WRITE_BEHIND: \${DEVICE_SNAPSHOT_WRITE_BEHIND:-true}
   BROADCAST_CONNECTION: pusher
   PUSHER_APP_ID:     \${PUSHER_APP_ID}
   PUSHER_APP_KEY:    \${PUSHER_APP_KEY}
@@ -909,6 +931,8 @@ x-app-env: &app-env
   INFLUXDB_BUCKET: \${INFLUXDB_BUCKET:-device_locations}
   INFLUXDB_ORG:    \${INFLUXDB_ORG:-track-any-device}
   INFLUXDB_TOKEN:  \${INFLUXDB_TOKEN}
+  INFLUXDB_RETENTION_DAYS:       \${INFLUXDB_RETENTION_DAYS:-90}
+  INFLUXDB_STORE_TENANT_HISTORY: \${INFLUXDB_STORE_TENANT_HISTORY:-false}
   PASSPORT_PRIVATE_KEY_B64: \${PASSPORT_PRIVATE_KEY_B64}
   PASSPORT_PUBLIC_KEY_B64:  \${PASSPORT_PUBLIC_KEY_B64}
   SMS_GATEWAY_URL:     \${SMS_GATEWAY_URL:-}
@@ -1045,10 +1069,11 @@ services:
     environment:
       JT808_TCP_ADDR:    :7018
       JT808_HTTP_ADDR:   :9090
-      REDIS_HOST: redis
+      REDIS_HOST: \${STREAM_REDIS_HOST:-redis}
       REDIS_PORT: 6379
       STREAM_KEY: jt808:telemetry
       STREAM_MAX_LEN: "100000"
+      STREAM_SHARDS:  "\${STREAM_SHARDS:-1}"
       SESSION_PREFIX:    "jt808:session:"
       AUTH_TOKEN_PREFIX: "jt808:authtoken:"
       ONLINE_Z_KEY: jt808:online
@@ -1080,11 +1105,12 @@ services:
     environment:
       GT06_TCP_ADDR:  :7019
       GT06_HTTP_ADDR: :9091
-      REDIS_HOST:     redis
+      REDIS_HOST:     \${STREAM_REDIS_HOST:-redis}
       REDIS_PORT:     6379
       REDIS_GT06_DB:  1
       STREAM_KEY:     gt06:telemetry
       STREAM_MAX_LEN: "100000"
+      STREAM_SHARDS:  "\${STREAM_SHARDS:-1}"
       CMD_CHANNEL:    "gt06:cmd:"
       DB_ENABLED:     "true"
       DB_HOST:        mysql
@@ -1106,11 +1132,12 @@ services:
     environment:
       H02_TCP_ADDR:      :7020
       H02_TCP_HTTP_ADDR: :9092
-      REDIS_HOST:        redis
+      REDIS_HOST:        \${STREAM_REDIS_HOST:-redis}
       REDIS_PORT:        6379
       REDIS_H02_DB:      2
       STREAM_KEY:        h02:telemetry
       STREAM_MAX_LEN:    "100000"
+      STREAM_SHARDS:     "\${STREAM_SHARDS:-1}"
       CMD_CHANNEL:       "h02:cmd:"
       DB_ENABLED:        "true"
       DB_HOST:           mysql
@@ -1132,11 +1159,12 @@ services:
     environment:
       H02_UDP_ADDR:      :7021
       H02_UDP_HTTP_ADDR: :9093
-      REDIS_HOST:        redis
+      REDIS_HOST:        \${STREAM_REDIS_HOST:-redis}
       REDIS_PORT:        6379
       REDIS_H02_DB:      2
       STREAM_KEY:        h02:telemetry
       STREAM_MAX_LEN:    "100000"
+      STREAM_SHARDS:     "\${STREAM_SHARDS:-1}"
       DB_ENABLED:        "true"
       DB_HOST:           mysql
       DB_PORT:           3306
@@ -1183,7 +1211,7 @@ services:
       SOKETI_DEFAULT_APP_SECRET: \${PUSHER_APP_SECRET}
       SOKETI_DEFAULT_APP_ENABLE_CLIENT_MESSAGES: "true"
       SOKETI_DEFAULT_APP_ENABLED: "true"
-      SOKETI_DEFAULT_APP_MAX_CONNECTIONS: "\${SOKETI_MAX_CONNECTIONS:-500}"
+      SOKETI_DEFAULT_APP_MAX_CONNECTIONS: "\${SOKETI_MAX_CONNECTIONS:-10000}"
       SOKETI_CORS_ALLOWED_ORIGINS: "*"
       SOKETI_DEFAULT_APP_WEBHOOKS: '[{"url":"http://api/api/v1/webhooks/soketi","event_types":["channel_occupied","channel_vacated"]}]'
     healthcheck:
@@ -1419,6 +1447,68 @@ run_seed() {
   ok "Database seeded — OAuth clients created with static IDs"
 }
 
+# ── Stack verification ────────────────────────────────────────────────────────
+# Every service the compose file declares (default profiles) must reach
+# state=running — and healthy where a healthcheck is defined — within the
+# timeout. A restarting/exited/unhealthy container fails the install and its
+# last log lines are printed, so a broken stack never reports success.
+verify_stack() {
+  local compose="${INSTALL_DIR}/docker-compose.yml"
+  if $DRY_RUN; then ok "Stack verification skipped (dry-run)"; return 0; fi
+
+  log "Verifying all containers are up and running..."
+
+  local services
+  services=$(docker compose -f "${compose}" config --services 2>/dev/null | sort)
+  if [[ -z "$services" ]]; then
+    err "Could not enumerate services from ${compose}."
+    exit 1
+  fi
+
+  local deadline=$(( $(date +%s) + 180 ))
+  local failed="" svc cid state health
+
+  while true; do
+    failed=""
+    for svc in $services; do
+      cid=$(docker compose -f "${compose}" ps -q "$svc" 2>/dev/null | head -n1)
+      if [[ -z "$cid" ]]; then
+        failed+="${svc}:missing "
+        continue
+      fi
+      state=$(docker inspect -f '{{.State.Status}}' "$cid" 2>/dev/null || echo unknown)
+      health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$cid" 2>/dev/null || echo none)
+      if [[ "$state" != "running" ]]; then
+        failed+="${svc}:${state} "
+      elif [[ "$health" != "none" && "$health" != "healthy" ]]; then
+        failed+="${svc}:${health} "
+      fi
+    done
+
+    [[ -z "$failed" ]] && break
+
+    if (( $(date +%s) >= deadline )); then
+      echo "" >/dev/tty
+      err "Containers not up after 3 minutes: ${failed}"
+      docker compose -f "${compose}" ps --format "table {{.Name}}\t{{.Status}}" 2>/dev/null || true
+      for svc in $failed; do
+        svc="${svc%%:*}"
+        echo "" >/dev/tty
+        warn "Last log lines from ${svc}:"
+        docker compose -f "${compose}" logs --tail 20 "$svc" 2>/dev/null || true
+      done
+      err "Stack verification FAILED — fix the services above, then re-run: bash install.sh --update"
+      exit 1
+    fi
+
+    printf "." >/dev/tty
+    sleep 5
+  done
+
+  echo "" >/dev/tty
+  ok "All $(echo "$services" | wc -l | tr -d ' ') containers up and running"
+}
+
 # ── Status display ────────────────────────────────────────────────────────────
 show_status() {
   local compose="${INSTALL_DIR}/docker-compose.yml"
@@ -1503,6 +1593,7 @@ main() {
     log "Applying pending migrations..."
     run "docker compose -f '${INSTALL_DIR}/docker-compose.yml' exec -T -w /var/www/html api php artisan migrate --force"
     ok "Migrations up to date."
+    verify_stack
     show_status
     ok "Update complete."
 
@@ -1518,6 +1609,7 @@ main() {
     wait_for_db
     wait_for_app
     run_seed
+    verify_stack
     show_status
 
     echo -e "${BOLD}${GREEN}"
