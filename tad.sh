@@ -263,6 +263,16 @@ check_swarm() {
     ok "Storage node label present (tad.storage=true)"
   else
     warn "No node is labelled tad.storage=true — mysql/influxdb/cron will stay Pending."
+  fi
+  _dev_found=""
+  for _n in $(docker node ls -q); do
+    [[ "$(docker node inspect "$_n" --format '{{ index .Spec.Labels "tad.device" }}' 2>/dev/null)" == "true" ]] \
+      && _dev_found=1 && break
+  done
+  if [[ -n "$_dev_found" ]]; then
+    ok "Device node label present (tad.device=true)"
+  else
+    warn "No node is labelled tad.device=true — jt808/gt06/h02 listeners will not start. Label one: docker node update --label-add tad.device=true <node>"
     warn "  Label your storage node once: docker node update --label-add tad.storage=true <node>"
   fi
 }
@@ -622,6 +632,17 @@ x-deploy-any: &deploy-any
   replicas: 1
   restart_policy: { condition: any }
 
+# Protocol servers: one replica per node labelled tad.device=true (mode: global
+# + host-mode ports keeps the device source IP). Scale by labelling more nodes
+# behind an external source-IP-hash TCP LB (HAProxy \`balance source\` / cloud
+# NLB) so a reconnecting device lands on the same replica. Label at least one:
+#   docker node update --label-add tad.device=true <node>
+x-deploy-protocol: &deploy-protocol
+  mode: global
+  restart_policy: { condition: any }
+  placement:
+    constraints: ["node.labels.tad.device == true"]
+
 x-deploy-storage: &deploy-storage
   replicas: 1
   restart_policy: { condition: any }
@@ -660,6 +681,8 @@ x-app-env: &app-env
   SESSION_DRIVER:   redis
   REDIS_HOST: redis
   REDIS_PORT: 6379
+  STREAM_REDIS_HOST: \${STREAM_REDIS_HOST:-redis}
+  STREAM_REDIS_PORT: 6379
   BROADCAST_CONNECTION: pusher
   PUSHER_APP_ID:     \${PUSHER_APP_ID}
   PUSHER_APP_KEY:    \${PUSHER_APP_KEY}
@@ -826,7 +849,7 @@ services:
     environment:
       JT808_TCP_ADDR:    :7018
       JT808_HTTP_ADDR:   :9090
-      REDIS_HOST: redis
+      REDIS_HOST: \${STREAM_REDIS_HOST:-redis}
       REDIS_PORT: 6379
       STREAM_KEY: jt808:telemetry
       STREAM_MAX_LEN: "100000"
@@ -849,7 +872,7 @@ services:
       retries: 5
       start_period: 30s
     deploy:
-      <<: *deploy-any
+      <<: *deploy-protocol
       resources: *res-small
 
   gt06:
@@ -860,7 +883,7 @@ services:
     environment:
       GT06_TCP_ADDR:  :7019
       GT06_HTTP_ADDR: :9091
-      REDIS_HOST:     redis
+      REDIS_HOST:     \${STREAM_REDIS_HOST:-redis}
       REDIS_PORT:     6379
       REDIS_GT06_DB:  1
       STREAM_KEY:     gt06:telemetry
@@ -874,7 +897,7 @@ services:
       DB_PASSWORD:    \${MYSQL_PASSWORD}
       DB_DEVICE_TYPE_ID: 2
     deploy:
-      <<: *deploy-any
+      <<: *deploy-protocol
       resources: *res-small
 
   h02-tcp:
@@ -885,7 +908,7 @@ services:
     environment:
       H02_TCP_ADDR:      :7020
       H02_TCP_HTTP_ADDR: :9092
-      REDIS_HOST:        redis
+      REDIS_HOST:        \${STREAM_REDIS_HOST:-redis}
       REDIS_PORT:        6379
       REDIS_H02_DB:      2
       STREAM_KEY:        h02:telemetry
@@ -899,7 +922,7 @@ services:
       DB_PASSWORD:       \${MYSQL_PASSWORD}
       DB_DEVICE_TYPE_ID: 3
     deploy:
-      <<: *deploy-any
+      <<: *deploy-protocol
       resources: *res-small
 
   h02-udp:
@@ -910,7 +933,7 @@ services:
     environment:
       H02_UDP_ADDR:      :7021
       H02_UDP_HTTP_ADDR: :9093
-      REDIS_HOST:        redis
+      REDIS_HOST:        \${STREAM_REDIS_HOST:-redis}
       REDIS_PORT:        6379
       REDIS_H02_DB:      2
       STREAM_KEY:        h02:telemetry
@@ -923,7 +946,7 @@ services:
       DB_PASSWORD:       \${MYSQL_PASSWORD}
       DB_DEVICE_TYPE_ID: 3
     deploy:
-      <<: *deploy-any
+      <<: *deploy-protocol
       resources: *res-small
 
   # ── Infrastructure ───────────────────────────────────────────────────────────
@@ -956,6 +979,17 @@ services:
       <<: *deploy-any
       resources: *res-small
 
+  # Dedicated telemetry-stream Redis. Default wiring still uses the shared
+  # \`redis\` service; set STREAM_REDIS_HOST=redis-streams in .env.tad to isolate
+  # the ingest firehose from cache/queue/session. (Streams are transient —
+  # switching hosts loses only the in-flight backlog, max STREAM_MAX_LEN.)
+  redis-streams:
+    image: redis:${REDIS_VERSION}
+    networks: [tad]
+    deploy:
+      <<: *deploy-any
+      resources: *res-small
+
   soketi:
     image: quay.io/soketi/soketi:${SOKETI_VERSION}
     networks: [tad, traefik-net]
@@ -966,7 +1000,13 @@ services:
       SOKETI_DEFAULT_APP_SECRET: \${PUSHER_APP_SECRET}
       SOKETI_DEFAULT_APP_ENABLE_CLIENT_MESSAGES: "true"
       SOKETI_DEFAULT_APP_ENABLED: "true"
-      SOKETI_DEFAULT_APP_MAX_CONNECTIONS: "\${SOKETI_MAX_CONNECTIONS:-500}"
+      SOKETI_DEFAULT_APP_MAX_CONNECTIONS: "\${SOKETI_MAX_CONNECTIONS:-10000}"
+      # Redis adapter lets replicas share channel state — clients are listeners
+      # and browser maps (thousands), devices never connect here.
+      SOKETI_ADAPTER_DRIVER: redis
+      SOKETI_CACHE_DRIVER:   redis
+      SOKETI_DB_REDIS_HOST:  redis
+      SOKETI_DB_REDIS_PORT:  "6379"
       SOKETI_CORS_ALLOWED_ORIGINS: "*"
       SOKETI_DEFAULT_APP_WEBHOOKS: '[{"url":"http://api/api/v1/webhooks/soketi","event_types":["channel_occupied","channel_vacated"]}]'
     healthcheck:
@@ -976,6 +1016,7 @@ services:
       retries: 10
     deploy:
       <<: *deploy-any
+      replicas: \${SOKETI_REPLICAS:-2}
       resources: *res-small
       labels:
         - "traefik.enable=true"
