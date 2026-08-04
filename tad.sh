@@ -310,6 +310,14 @@ detect_existing_env() {
   CFG_INFLUX_TOKEN="${INFLUXDB_TOKEN:-}"
   CFG_PASSPORT_PRIVATE="${PASSPORT_PRIVATE_KEY_B64:-}"
   CFG_PASSPORT_PUBLIC="${PASSPORT_PUBLIC_KEY_B64:-}"
+  # ── WhatsApp (Meta Cloud API) — no interactive prompt, see collect_config() ──
+  CFG_WHATSAPP_PHONE_NUMBER_ID="${WHATSAPP_PHONE_NUMBER_ID:-}"
+  CFG_WHATSAPP_BUSINESS_ACCOUNT_ID="${WHATSAPP_BUSINESS_ACCOUNT_ID:-}"
+  CFG_WHATSAPP_ACCESS_TOKEN="${WHATSAPP_ACCESS_TOKEN:-}"
+  CFG_WHATSAPP_APP_SECRET="${WHATSAPP_APP_SECRET:-}"
+  CFG_WHATSAPP_VERIFY_TOKEN="${WHATSAPP_VERIFY_TOKEN:-}"
+  CFG_WHATSAPP_OTP_TEMPLATE_NAME="${WHATSAPP_OTP_TEMPLATE_NAME:-}"
+  CFG_WHATSAPP_OTP_TEMPLATE_LANGUAGE="${WHATSAPP_OTP_TEMPLATE_LANGUAGE:-en}"
   # ── Public current-state tracker (server-tenant) ──
   CFG_TRACKER_HOST="${TRACKER_HOST:-}"
   CFG_TENANT_APP_KEY="${TENANT_APP_KEY:-}"
@@ -408,6 +416,19 @@ collect_config() {
     CFG_SMS_NUMBER=$(ask "SMS master number (e.g. +92300000000)")
   fi
 
+  # WhatsApp (Meta Cloud API) — not prompted here; obtaining these (an app secret,
+  # a long-lived access token, and an Authentication-template approval from Meta)
+  # is a multi-step dashboard process you do AFTER the stack is up. Fill them into
+  # .env.tad when ready, then: bash tad.sh --update. Login OTP falls back to SMS
+  # until WHATSAPP_OTP_TEMPLATE_NAME is set to an approved template.
+  CFG_WHATSAPP_PHONE_NUMBER_ID=""
+  CFG_WHATSAPP_BUSINESS_ACCOUNT_ID=""
+  CFG_WHATSAPP_ACCESS_TOKEN=""
+  CFG_WHATSAPP_APP_SECRET=""
+  CFG_WHATSAPP_VERIFY_TOKEN=""
+  CFG_WHATSAPP_OTP_TEMPLATE_NAME=""
+  CFG_WHATSAPP_OTP_TEMPLATE_LANGUAGE="en"
+
   # ── Public current-state tracker (server-tenant) ──────────────────────────
   # Standalone public page; connects to the central api with the tenant's
   # machine ACCESS KEY (Tenant ID + tk_… key) generated/copied from /admin
@@ -453,6 +474,7 @@ collect_config() {
   echo "  Database:           ${CFG_MYSQL_USER}@mysql/${CFG_MYSQL_DB}"
   echo "  Device ports:       JT808 7018/tcp · GT06 7019/tcp · H02 7020/tcp + 7021/udp (direct)"
   echo "  SMS Gateway:        ${CFG_SMS_URL:-(skipped)}"
+  echo "  WhatsApp:           (not configured — edit .env.tad after install, then tad.sh --update)"
   echo ""
   if ! confirm "Proceed with Swarm deployment?"; then
     echo "Aborted."
@@ -535,6 +557,22 @@ SMS_GATEWAY_URL=${CFG_SMS_URL:-}
 SMS_GATEWAY_API_KEY=${CFG_SMS_KEY:-}
 SMS_MASTER_NUMBER=${CFG_SMS_NUMBER:-}
 
+# ── WhatsApp — Meta Cloud API (optional) ──────────────────────────────────────
+# Meta App dashboard → WhatsApp → API Setup / Configuration. Webhook callback URL
+# to enter there: https://api.\${APP_DOMAIN}/api/v1/webhooks/whatsapp
+# WHATSAPP_VERIFY_TOKEN: any string you choose — enter the SAME value as the
+# dashboard's "Verify token". WHATSAPP_OTP_TEMPLATE_NAME: a Meta-approved
+# Authentication-category template (WhatsApp Manager → Message Templates) — login
+# OTP falls back to SMS automatically until this is set to an approved template.
+# Fill these in, then redeploy: bash tad.sh --update
+WHATSAPP_PHONE_NUMBER_ID=${CFG_WHATSAPP_PHONE_NUMBER_ID:-}
+WHATSAPP_BUSINESS_ACCOUNT_ID=${CFG_WHATSAPP_BUSINESS_ACCOUNT_ID:-}
+WHATSAPP_ACCESS_TOKEN=${CFG_WHATSAPP_ACCESS_TOKEN:-}
+WHATSAPP_APP_SECRET=${CFG_WHATSAPP_APP_SECRET:-}
+WHATSAPP_VERIFY_TOKEN=${CFG_WHATSAPP_VERIFY_TOKEN:-}
+WHATSAPP_OTP_TEMPLATE_NAME=${CFG_WHATSAPP_OTP_TEMPLATE_NAME:-}
+WHATSAPP_OTP_TEMPLATE_LANGUAGE=${CFG_WHATSAPP_OTP_TEMPLATE_LANGUAGE:-en}
+
 # ── JT808 device configuration (embedded in setup SMS) ───────────────────────
 JT808_HOST=${CFG_JT808_HOST:-}
 JT808_PORT=${CFG_JT808_PORT:-7018}
@@ -579,6 +617,13 @@ patch_env() {
   _ensure_var "SMS_GATEWAY_URL"   ""
   _ensure_var "SMS_GATEWAY_API_KEY" ""
   _ensure_var "SMS_MASTER_NUMBER" ""
+  _ensure_var "WHATSAPP_PHONE_NUMBER_ID"     ""
+  _ensure_var "WHATSAPP_BUSINESS_ACCOUNT_ID" ""
+  _ensure_var "WHATSAPP_ACCESS_TOKEN"        ""
+  _ensure_var "WHATSAPP_APP_SECRET"          ""
+  _ensure_var "WHATSAPP_VERIFY_TOKEN"        ""
+  _ensure_var "WHATSAPP_OTP_TEMPLATE_NAME"     ""
+  _ensure_var "WHATSAPP_OTP_TEMPLATE_LANGUAGE" "en"
 
   # ── Public current-state tracker (server-tenant) ──
   # Added for existing deploys. TRACKER_HOST defaults to track.<APP_DOMAIN>;
@@ -705,6 +750,13 @@ x-app-env: &app-env
   SMS_GATEWAY_URL:     \${SMS_GATEWAY_URL:-}
   SMS_GATEWAY_API_KEY: \${SMS_GATEWAY_API_KEY:-}
   SMS_MASTER_NUMBER:   \${SMS_MASTER_NUMBER:-}
+  WHATSAPP_PHONE_NUMBER_ID:     \${WHATSAPP_PHONE_NUMBER_ID:-}
+  WHATSAPP_BUSINESS_ACCOUNT_ID: \${WHATSAPP_BUSINESS_ACCOUNT_ID:-}
+  WHATSAPP_ACCESS_TOKEN:        \${WHATSAPP_ACCESS_TOKEN:-}
+  WHATSAPP_APP_SECRET:          \${WHATSAPP_APP_SECRET:-}
+  WHATSAPP_VERIFY_TOKEN:        \${WHATSAPP_VERIFY_TOKEN:-}
+  WHATSAPP_OTP_TEMPLATE_NAME:     \${WHATSAPP_OTP_TEMPLATE_NAME:-}
+  WHATSAPP_OTP_TEMPLATE_LANGUAGE: \${WHATSAPP_OTP_TEMPLATE_LANGUAGE:-en}
 
 services:
 
@@ -1251,6 +1303,10 @@ main() {
     echo "    4. Open the device protocol ports in your host/cloud firewall so trackers"
     echo "       can reach them directly: 7018/tcp (JT808), 7019/tcp (GT06),"
     echo "       7020/tcp + 7021/udp (H02)."
+    echo "    5. WhatsApp (optional): in the Meta App dashboard, set the webhook callback"
+    echo "       URL to https://api.${CFG_DOMAIN}/api/v1/webhooks/whatsapp. Then fill the"
+    echo "       WHATSAPP_* vars into ${ENV_FILE} and run: bash tad.sh --update"
+    echo "       (login OTP uses SMS until WHATSAPP_OTP_TEMPLATE_NAME is an approved template)"
     echo ""
     echo "  Config saved to: ${ENV_FILE}"
     echo "  Stack file:      ${STACK_FILE}"
