@@ -13,20 +13,18 @@
 #
 # Options:
 #   --update      Re-pull + rolling-redeploy the stack + run migrations. No prompts.
-#   --dir PATH    Override install directory
-#                 (default: ./track-any-device under the current folder, or $TAD_DIR)
+#   --dir PATH    Override install directory (default: the current directory, or $TAD_DIR)
 #   --dry-run     Print what would happen without making changes
 #
-# Run this from your deployment folder (the one that holds your other stacks /
-# client.yml / server.yml). Everything this stack owns is created beneath a
-# single `track-any-device/` subdirectory, so it never collides with the rest:
-#     <deploy-folder>/
-#       client.yml  server.yml  …            (your other stacks — untouched)
-#       track-any-device/
-#         tad.sh        (this script, persisted for --update)
-#         tad.yml       (generated Swarm stack file)
-#         .env.tad      (this stack's environment — never plain .env)
-#         volumes/{mysql,influxdb,app_storage}   (local bind mounts)
+# Run this from the directory you want the stack's files in — everything this
+# stack owns is created directly there (NOT in a nested subfolder):
+#     <this-directory>/
+#       tad.sh        (this script, persisted for --update)
+#       tad.yml       (generated Swarm stack file)
+#       .env.tad      (this stack's environment — never plain .env)
+#       volumes/{mysql,influxdb,app_storage}   (local bind mounts)
+# If you keep other stacks (client.yml, server.yml, …) alongside this one, run
+# tad.sh from a dedicated subdirectory yourself — it no longer creates one for you.
 #
 # Ingress:
 #   HTTP services (api, soketi) are routed by your EXISTING Traefik instance
@@ -79,9 +77,8 @@ PMA_VERSION="5.2.2"
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
-# Default install dir is a `track-any-device/` folder under the CURRENT directory,
-# so this stack sits beside (not on top of) the other stacks in your deploy folder.
-INSTALL_DIR="${TAD_DIR:-$PWD/track-any-device}"
+# Default install dir is the directory you run this script from.
+INSTALL_DIR="${TAD_DIR:-$PWD}"
 ORG="trackanydevice"
 STACK="tad"                 # Swarm stack name (docker stack deploy ... tad)
 NETWORK="tad"               # internal overlay network for service-to-service traffic
@@ -1315,7 +1312,7 @@ main() {
   fi
 }
 
-# Persist a copy of this script into track-any-device/ so future --update works.
+# Persist a copy of this script into INSTALL_DIR so future --update works.
 # When invoked via `curl -fsSL .../tad.sh | bash` there is no local file, so the
 # script is downloaded from the repo instead.
 TAD_SH_URL="https://raw.githubusercontent.com/track-any-device/.github/main/tad.sh"
