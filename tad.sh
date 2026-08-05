@@ -997,7 +997,6 @@ services:
       MYSQL_DATABASE:      \${MYSQL_DATABASE}
       MYSQL_USER:          \${MYSQL_USER}
       MYSQL_PASSWORD:      \${MYSQL_PASSWORD}
-    ports: ["3306:3306"]
     volumes:
       - ${INSTALL_DIR}/volumes/mysql:/var/lib/mysql
     healthcheck:
@@ -1011,7 +1010,6 @@ services:
   redis:
     image: redis:${REDIS_VERSION}
     networks: [tad]
-    ports: ["6379:6379"]
     deploy:
       <<: *deploy-any
 
@@ -1028,7 +1026,9 @@ services:
   soketi:
     image: quay.io/soketi/soketi:${SOKETI_VERSION}
     networks: [tad, traefik-net]
-    ports: ["6001:6001", "9601:9601"]
+    # No direct ports — Traefik (below) routes ws.${APP_DOMAIN} to this on
+    # :6001. Port 9601 (metrics) stays internal-only; reach it via the
+    # overlay network, not the public internet.
     environment:
       SOKETI_DEFAULT_APP_ID:     \${PUSHER_APP_ID}
       SOKETI_DEFAULT_APP_KEY:    \${PUSHER_APP_KEY}
@@ -1064,7 +1064,6 @@ services:
   influxdb:
     image: influxdb:${INFLUXDB_VERSION}
     networks: [tad]
-    ports: ["8086:8086"]
     volumes:
       - ${INSTALL_DIR}/volumes/influxdb:/var/lib/influxdb2
     environment:
