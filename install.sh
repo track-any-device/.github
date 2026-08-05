@@ -43,7 +43,6 @@ SOKETI_VERSION="1.4-16-alpine"
 INFLUXDB_VERSION="2.7-alpine"
 MAILPIT_VERSION="v1.24.0"
 PMA_VERSION="5.2.2"
-CLOUDFLARED_VERSION="2025.5.0"
 GRAFANA_VERSION="11.6.0"
 LOKI_VERSION="3.5.0"
 FRPC_VERSION="0.61.1"
@@ -215,7 +214,6 @@ detect_existing_env() {
   CFG_MYSQL_USER="${MYSQL_USER:-tad}"
   CFG_MYSQL_ROOT_PASS="${MYSQL_ROOT_PASSWORD:-}"
   CFG_MYSQL_PASS="${MYSQL_PASSWORD:-}"
-  CFG_CF_TOKEN="${CLOUDFLARE_TUNNEL_TOKEN:-}"
   CFG_JT808_HOST="${JT808_HOST:-}"
   CFG_JT808_PORT="${JT808_PORT:-7018}"
   CFG_GT06_HOST="${GT06_HOST:-}"
@@ -263,7 +261,6 @@ collect_config() {
     echo ""
     echo "  Domain:    ${CFG_DOMAIN}"
     echo "  Database:  ${CFG_MYSQL_USER}@mysql/${CFG_MYSQL_DB}"
-    echo "  CF Tunnel: ${CFG_CF_TOKEN:-(not configured)}"
     echo "  SMS URL:   ${CFG_SMS_URL:-(not configured)}"
     echo "  WhatsApp:  ${CFG_WHATSAPP_ACCESS_TOKEN:-(not configured)}"
     echo "  JT808:     ${CFG_JT808_HOST:-${CFG_DOMAIN}}:${CFG_JT808_PORT}"
@@ -330,8 +327,6 @@ collect_config() {
   echo ""
   echo -e "${BOLD}── Step 3/4 — Optional Services ────────────────────────────────${RESET}"
   echo ""
-
-  CFG_CF_TOKEN=$(ask "Cloudflare Tunnel token (blank to skip)")
 
   # JT808 device configuration (written into the setup SMS sent to the device)
   # When a GPS tracker is added, the platform sends it an SMS containing the
@@ -420,7 +415,7 @@ collect_config() {
   echo "  Install directory:  ${INSTALL_DIR}"
   echo "  Domain:             ${CFG_DOMAIN}"
   echo "  Database:           ${CFG_MYSQL_USER}@mysql/${CFG_MYSQL_DB}"
-  echo "  Cloudflare Tunnel:  ${CFG_CF_TOKEN:-(skipped)}"
+  echo "  Ingress:            api published directly on host port 80"
   echo "  SMS Gateway:        ${CFG_SMS_URL:-(skipped)}"
   echo "  WhatsApp:           (not configured — edit .env after install, then install.sh --update)"
   echo ""
@@ -466,9 +461,10 @@ API_APP_KEY=${CFG_API_KEY}
 
 # ── Public current-state tracker (server-tenant) ──────────────────────────────
 # Standalone PUBLIC device tracker (image trackanydevice/server-tenant, SQLite).
-# Routing: ${CFG_TRACKER_HOST:-track.${CFG_DOMAIN}} must be routed to
-# server-tenant:80 in your Cloudflare Tunnel (Zero Trust → Networks → Tunnels →
-# Public Hostnames).
+# This installer does not manage ingress for it — it only publishes the main
+# `api` service on host port 80. Route ${CFG_TRACKER_HOST:-track.${CFG_DOMAIN}}
+# to server-tenant:80 yourself (a reverse proxy, or publish another host port
+# for it in docker-compose.yml).
 #
 # APP_TENANT_ID + TENANT_API_TOKEN are GENERATED/COPIED from the central admin
 # org-details screen (/admin/organisations → rotate via
@@ -526,10 +522,6 @@ SOKETI_MAX_CONNECTIONS=10000
 # To rotate: generate new keys and restart the api service.
 PASSPORT_PRIVATE_KEY_B64=${CFG_PASSPORT_PRIVATE}
 PASSPORT_PUBLIC_KEY_B64=${CFG_PASSPORT_PUBLIC}
-
-# ── Cloudflare Tunnel ─────────────────────────────────────────────────────────
-# Configure public hostnames in Zero Trust → Networks → Tunnels.
-CLOUDFLARE_TUNNEL_TOKEN=${CFG_CF_TOKEN:-}
 
 # ── SMS Gateway (optional) ────────────────────────────────────────────────────
 SMS_GATEWAY_URL=${CFG_SMS_URL:-}
@@ -991,6 +983,12 @@ services:
     <<: *app-base
     image: ${ORG}/server-api:latest
     container_name: api
+    # No reverse proxy/tunnel in front by default — published directly on the
+    # host. Port 443 is NOT published: nginx inside the image only listens on
+    # 80 (no cert configured here), so a bare 443 mapping would just refuse
+    # connections. Put your own TLS-terminating reverse proxy in front if you
+    # need HTTPS, and point it at this host's port 80.
+    ports: ["80:80"]
     environment:
       <<: *app-env
       APP_SURFACE: api
@@ -1018,9 +1016,10 @@ services:
   # Generate/copy the Tenant ID + access key from the admin org-details screen
   # (/admin/organisations → rotate via POST /api/admin/tenants/{id}/key).
   #
-  # ROUTING (Cloudflare Tunnel): this serves on :80 inside the tda network. In
-  # Zero Trust → Networks → Tunnels → Public Hostnames add:
-  #     \${TRACKER_HOST}  →  http://server-tenant:80
+  # ROUTING: this serves on :80 inside the tda network only — no port published
+  # by default (can't share host:80 with the api service above). Route
+  # \${TRACKER_HOST} to it yourself: your own reverse proxy, or add a
+  # `ports: ["<host-port>:80"]` line here.
   #
   # SQLite persistence: the named volume server_tenant_db keeps the current-state
   # DB across restarts. The container runs migrate --force on boot (creating the
@@ -1300,16 +1299,6 @@ services:
       PMA_HOST:     mysql
       PMA_USER:     \${MYSQL_USER}
       PMA_PASSWORD: \${MYSQL_PASSWORD}
-
-  cloudflared:
-    image: cloudflare/cloudflared:${CLOUDFLARED_VERSION}
-    container_name: cloudflared
-    networks: [tda]
-    restart: unless-stopped
-    command: tunnel --no-autoupdate run --token \${CLOUDFLARE_TUNNEL_TOKEN}
-    environment:
-      TUNNEL_TOKEN: \${CLOUDFLARE_TUNNEL_TOKEN}
-    dns: [8.8.8.8, 1.1.1.1]
 
   # ── Logging (docker compose --profile logging up -d) ──────────────────────
   loki:
@@ -1592,7 +1581,8 @@ show_status() {
   echo ""
   echo -e "${BOLD}── Public tracker (server-tenant) ──────────────────────────────${RESET}"
   echo "  MANUAL: route ${TRACKER_HOST:-track.${APP_DOMAIN:-track-any-device.com}} → http://server-tenant:80"
-  echo "          in Cloudflare Zero Trust → Networks → Tunnels → Public Hostnames."
+  echo "          yourself (this installer only publishes 'api' on host port 80) —"
+  echo "          a reverse proxy, or add ports: [\"<host-port>:80\"] to server-tenant."
   if [[ -z "${APP_TENANT_ID:-}" || -z "${TENANT_API_TOKEN:-}" ]]; then
     warn "Tenant ID / access key not set — the tracker is deployed but will NOT"
     warn "  sync or connect yet. Paste both from /admin organisations (X-Tenant-Id"
@@ -1669,8 +1659,9 @@ main() {
     echo "  ✓ Installation complete!"
     echo -e "${RESET}"
     echo "  Next steps:"
-    echo "    1. Add Cloudflare Tunnel public hostnames (if not already done) —"
-    echo "       including ${TRACKER_HOST:-track.${CFG_DOMAIN}} → http://server-tenant:80"
+    echo "    1. Put a reverse proxy in front if you need TLS — this installer only"
+    echo "       publishes 'api' on plain host port 80. Route"
+    echo "       ${TRACKER_HOST:-track.${CFG_DOMAIN}} → http://server-tenant:80 yourself"
     echo "       for the public current-state tracker."
     echo "    2. Open the web app → sign in with SMS-OTP and onboard your account"
     echo "    3. Public tracker: copy the Tenant ID (X-Tenant-Id) + access key (tk_…)"
