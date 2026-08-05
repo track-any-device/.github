@@ -649,6 +649,19 @@ create_directories() {
   if ! $DRY_RUN; then
     chmod -R 775 "${INSTALL_DIR}/volumes" 2>/dev/null || true
   fi
+
+  # Fail clearly here, before write_env()'s `cat > .env.tad` hits the same
+  # problem as a raw, unhelpful `bash: ... Permission denied` mid-script abort.
+  if ! $DRY_RUN && [[ ! -w "${INSTALL_DIR}" ]]; then
+    local owner
+    owner=$(stat -c '%U' "${INSTALL_DIR}" 2>/dev/null || stat -f '%Su' "${INSTALL_DIR}" 2>/dev/null || echo "unknown")
+    err "${INSTALL_DIR} is not writable by $(whoami) (owned by: ${owner})."
+    err "  Note: 'sudo curl ... | bash' only elevates curl — the piped bash still runs as $(whoami)."
+    err "  Re-run as:  curl -fsSL <url> | sudo bash"
+    err "  or:         curl -fsSL <url> -o tad.sh && sudo bash tad.sh"
+    exit 1
+  fi
+
   ok "Directories ready"
 }
 
