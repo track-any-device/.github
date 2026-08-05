@@ -671,9 +671,9 @@ x-deploy-any: &deploy-any
 # constraint — on a single-node Swarm that's just the one node, same as
 # replicas: 1. On a multi-node Swarm it now runs on EVERY node (not just
 # labelled ones), each independently accepting device connections on the host
-# port. If you only want specific nodes taking device traffic, add back
-# `placement: { constraints: ["node.labels.tad.device == true"] }` and label
-# those nodes: docker node update --label-add tad.device=true <node>
+# port. If you only want specific nodes taking device traffic, add back a
+# placement constraint (node.labels.tad.device == true) and label those
+# nodes: docker node update --label-add tad.device=true <node>
 x-deploy-protocol: &deploy-protocol
   mode: global
   restart_policy: { condition: any }
