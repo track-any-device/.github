@@ -252,16 +252,6 @@ check_swarm() {
     warn "  Create once if needed: docker network create --driver overlay --attachable ${TRAEFIK_NET}"
   fi
 
-  _dev_found=""
-  for _n in $(docker node ls -q); do
-    [[ "$(docker node inspect "$_n" --format '{{ index .Spec.Labels "tad.device" }}' 2>/dev/null)" == "true" ]] \
-      && _dev_found=1 && break
-  done
-  if [[ -n "$_dev_found" ]]; then
-    ok "Device node label present (tad.device=true)"
-  else
-    warn "No node is labelled tad.device=true — jt808/gt06/h02 listeners will not start. Label one: docker node update --label-add tad.device=true <node>"
-  fi
 }
 
 # ── Detect and load an existing .env ─────────────────────────────────────────
@@ -677,16 +667,17 @@ x-deploy-any: &deploy-any
   replicas: 1
   restart_policy: { condition: any }
 
-# Protocol servers: one replica per node labelled tad.device=true (mode: global
-# + host-mode ports keeps the device source IP). Scale by labelling more nodes
-# behind an external source-IP-hash TCP LB (HAProxy \`balance source\` / cloud
-# NLB) so a reconnecting device lands on the same replica. Label at least one:
-#   docker node update --label-add tad.device=true <node>
+# Protocol servers: mode: global + host-mode ports keeps the device source IP
+# by running one task per node, no routing mesh in between. No placement
+# constraint — on a single-node Swarm that's just the one node, same as
+# replicas: 1. On a multi-node Swarm it now runs on EVERY node (not just
+# labelled ones), each independently accepting device connections on the host
+# port. If you only want specific nodes taking device traffic, add back
+# `placement: { constraints: ["node.labels.tad.device == true"] }` and label
+# those nodes: docker node update --label-add tad.device=true <node>
 x-deploy-protocol: &deploy-protocol
   mode: global
   restart_policy: { condition: any }
-  placement:
-    constraints: ["node.labels.tad.device == true"]
 
 x-app-env: &app-env
   APP_ENV:   \${APP_ENV:-production}
