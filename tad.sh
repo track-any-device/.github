@@ -40,11 +40,13 @@
 #   • Your Swarm, your `traefik-net`, and your node labels must already exist —
 #     this script does NOT init a swarm, create networks, or label nodes.
 #   • Run it on a MANAGER node (so it can `docker stack deploy`).
-#   • Pinned services (mysql, influxdb, cron) require ONE node
-#     labelled tad.storage=true — local bind volumes live there. Label it once:
-#       docker node update --label-add tad.storage=true <node>
-#   • Stateless services (api, queue, protocol servers, soketi …) run
-#     on any node and reach the database/redis over the overlay network.
+#   • No placement constraint on mysql/influxdb/cron/server-tenant — they
+#     schedule on any node, same as everything else. Their data (bind-mounted
+#     under INSTALL_DIR/volumes/) lives on whichever node they land on, so on
+#     a single-node Swarm this is a non-issue. If you add worker nodes later,
+#     a reschedule of mysql/influxdb onto a different node starts from an
+#     EMPTY volume — pin them yourself with a placement constraint + a node
+#     label at that point, or move to a shared/distributed volume driver.
 # ──────────────────────────────────────────────────────────────────────────────
 
 # Capture script path BEFORE set -u (undefined when piped via curl | bash).
@@ -250,17 +252,6 @@ check_swarm() {
     warn "  Create once if needed: docker network create --driver overlay --attachable ${TRAEFIK_NET}"
   fi
 
-  # Pinned services need ONE node labelled tad.storage=true. We do not set it.
-  local has_storage=""
-  while read -r _n; do
-    [[ "$(docker node inspect "$_n" --format '{{ index .Spec.Labels "tad.storage" }}' 2>/dev/null)" == "true" ]] \
-      && { has_storage=1; break; }
-  done < <(docker node ls -q 2>/dev/null)
-  if [[ -n "$has_storage" ]]; then
-    ok "Storage node label present (tad.storage=true)"
-  else
-    warn "No node is labelled tad.storage=true — mysql/influxdb/cron will stay Pending."
-  fi
   _dev_found=""
   for _n in $(docker node ls -q); do
     [[ "$(docker node inspect "$_n" --format '{{ index .Spec.Labels "tad.device" }}' 2>/dev/null)" == "true" ]] \
@@ -270,7 +261,6 @@ check_swarm() {
     ok "Device node label present (tad.device=true)"
   else
     warn "No node is labelled tad.device=true — jt808/gt06/h02 listeners will not start. Label one: docker node update --label-add tad.device=true <node>"
-    warn "  Label your storage node once: docker node update --label-add tad.storage=true <node>"
   fi
 }
 
@@ -698,12 +688,6 @@ x-deploy-protocol: &deploy-protocol
   placement:
     constraints: ["node.labels.tad.device == true"]
 
-x-deploy-storage: &deploy-storage
-  replicas: 1
-  restart_policy: { condition: any }
-  placement:
-    constraints: ["node.labels.tad.storage == true"]
-
 x-app-env: &app-env
   APP_ENV:   \${APP_ENV:-production}
   APP_DEBUG: \${APP_DEBUG:-false}
@@ -824,7 +808,7 @@ services:
     volumes:
       - ${INSTALL_DIR}/volumes/server_tenant_db:/var/www/html/sqlite
     deploy:
-      <<: *deploy-storage
+      <<: *deploy-any
       labels:
         - "traefik.enable=true"
         - "traefik.swarm.network=${TRAEFIK_NET}"
@@ -851,7 +835,7 @@ services:
       H02_TCP_PORT: \${H02_TCP_PORT:-7020}
       H02_UDP_PORT: \${H02_UDP_PORT:-7021}
     deploy:
-      <<: *deploy-storage
+      <<: *deploy-any
 
   # ── Queue worker ─────────────────────────────────────────────────────────────
   queue:
@@ -1005,7 +989,7 @@ services:
       timeout: 5s
       retries: 10
     deploy:
-      <<: *deploy-storage
+      <<: *deploy-any
 
   redis:
     image: redis:${REDIS_VERSION}
@@ -1074,7 +1058,7 @@ services:
       DOCKER_INFLUXDB_INIT_BUCKET:      \${INFLUXDB_BUCKET:-device_locations}
       DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: \${INFLUXDB_TOKEN}
     deploy:
-      <<: *deploy-storage
+      <<: *deploy-any
 
   mailtrap:
     image: axllent/mailpit:${MAILPIT_VERSION}
