@@ -71,7 +71,6 @@ MYSQL_VERSION="8.0.32"
 REDIS_VERSION="7-alpine"
 SOKETI_VERSION="1.4-16-alpine"
 INFLUXDB_VERSION="2.7-alpine"
-MAILPIT_VERSION="v1.24.0"
 PMA_VERSION="5.2.2"
 # Note: TLS/ingress is handled by your EXISTING Traefik on the external
 # `traefik-net` overlay — this stack does NOT ship its own Traefik.
@@ -706,10 +705,12 @@ x-app-env: &app-env
   PUSHER_PORT:       6001
   PUSHER_SCHEME:     http
   PUSHER_APP_CLUSTER: mt1
-  MAIL_MAILER: smtp
-  MAIL_HOST:   mailtrap
-  MAIL_PORT:   1025
-  MAIL_FROM_ADDRESS: noreply@\${APP_DOMAIN}
+  # No mail service deployed — defaults to logging mail instead of sending.
+  # Set MAIL_MAILER/HOST/PORT (+ credentials) in .env.tad for real SMTP.
+  MAIL_MAILER: \${MAIL_MAILER:-log}
+  MAIL_HOST:   \${MAIL_HOST:-}
+  MAIL_PORT:   \${MAIL_PORT:-587}
+  MAIL_FROM_ADDRESS: \${MAIL_FROM_ADDRESS:-noreply@\${APP_DOMAIN}}
   INFLUXDB_HOST:   influxdb
   INFLUXDB_PORT:   8086
   INFLUXDB_BUCKET: \${INFLUXDB_BUCKET:-device_locations}
@@ -1051,13 +1052,6 @@ services:
     deploy:
       <<: *deploy-any
 
-  mailtrap:
-    image: axllent/mailpit:${MAILPIT_VERSION}
-    networks: [tad]
-    ports: ["1025:1025", "8025:8025"]
-    deploy:
-      <<: *deploy-any
-
   pma:
     image: phpmyadmin/phpmyadmin:${PMA_VERSION}
     networks: [tad]
@@ -1181,7 +1175,6 @@ show_status() {
   echo "  Realtime WS:  https://ws.${APP_DOMAIN:-track-any-device.com}      | https://ws-tad.${shd}"
   echo "  Public track: https://${TRACKER_HOST:-track.${APP_DOMAIN:-track-any-device.com}}  (server-tenant :80)"
   echo "  phpMyAdmin:   http://<node-ip>:3333"
-  echo "  MailPit:      http://<node-ip>:8025"
   echo ""
   echo -e "${BOLD}── Public tracker (server-tenant) ──────────────────────────────${RESET}"
   echo "  Routed by your Traefik: Host(${TRACKER_HOST:-track.${APP_DOMAIN:-track-any-device.com}}) → :80"
