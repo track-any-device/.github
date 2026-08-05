@@ -1119,32 +1119,37 @@ wait_for_db() {
 }
 
 wait_for_app() {
-  $DRY_RUN && { echo "  [dry] Would wait for cron (migration runner) task"; return 0; }
+  $DRY_RUN && { echo "  [dry] Would wait for cron's own boot-time migration to finish"; return 0; }
 
-  log "Waiting for the migration runner (cron) task on this node..."
+  # cron's own entrypoint (docker/cron/start.sh in track-any-device/app) already
+  # runs `php artisan migrate --force` on every boot, before `exec supervisord`.
+  # We do NOT also run migrate from here — a second concurrent `migrate --force`
+  # racing cron's internal one is exactly how you get "Base table already
+  # exists" (both processes see the same migration as pending before either
+  # commits). Instead, wait for PID 1 in the container to actually BE
+  # supervisord — since start.sh's `exec` only replaces its own process image
+  # after migrate (and everything before it) has already completed, that's a
+  # reliable signal migrations are done, not just that PHP is bootable.
+  log "Waiting for cron's boot-time migration to finish..."
   local attempts=0 cid=""
   while true; do
     cid="$(_local_task cron)"
-    if [[ -n "$cid" ]] && docker exec "$cid" php artisan --version &>/dev/null; then
+    if [[ -n "$cid" ]] && [[ "$(docker exec "$cid" cat /proc/1/comm 2>/dev/null)" == "supervisord" ]]; then
       break
     fi
     attempts=$((attempts + 1))
-    [[ $attempts -ge 30 ]] && { err "cron task did not become ready within 5 minutes."; exit 1; }
+    [[ $attempts -ge 30 ]] && { err "cron did not finish migrating within 5 minutes. Check: docker service logs ${STACK}_cron"; exit 1; }
     printf "." >/dev/tty
     sleep 10
   done
   echo "" >/dev/tty
-  ok "Migration runner ready"
+  ok "Migrations complete (ran automatically on cron boot)"
 }
 
 run_seed() {
-  $DRY_RUN && { echo "  [dry] Would run migrate + db:seed via the cron task"; return 0; }
+  $DRY_RUN && { echo "  [dry] Would run db:seed via the cron task"; return 0; }
   local cid; cid="$(_local_task cron)"
-  [[ -z "$cid" ]] && { err "No running cron task found on this node for migrations."; exit 1; }
-
-  log "Running migrations..."
-  run "docker exec -w /var/www/html '${cid}' php artisan migrate --force"
-  ok "Migrations complete"
+  [[ -z "$cid" ]] && { err "No running cron task found on this node for seeding."; exit 1; }
 
   log "Seeding database (device types, OAuth clients, admin user, sample data)..."
   run "docker exec -w /var/www/html '${cid}' php artisan db:seed --force"
@@ -1216,9 +1221,6 @@ main() {
     generate_stack
     stack_deploy
     wait_for_app
-    log "Applying pending migrations..."
-    run "docker exec -w /var/www/html \"\$(_local_task cron)\" php artisan migrate --force"
-    ok "Migrations up to date."
     show_status
     ok "Update complete."
   else
