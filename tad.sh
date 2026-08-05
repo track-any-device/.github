@@ -704,21 +704,6 @@ x-deploy-storage: &deploy-storage
   placement:
     constraints: ["node.labels.tad.storage == true"]
 
-# Resource tiers — tune to your nodes. limits = hard cap; reservations = the
-# amount the scheduler guarantees (reservations across all tasks must fit a node).
-x-res-app: &res-app
-  limits:       { cpus: "4", memory: "5120M" }
-  reservations: { cpus: "1", memory: "512M" }
-x-res-worker: &res-worker
-  limits:       { cpus: "2", memory: "2048M" }
-  reservations: { cpus: "0.5", memory: "256M" }
-x-res-db: &res-db
-  limits:       { cpus: "4", memory: "4096M" }
-  reservations: { cpus: "1", memory: "1024M" }
-x-res-small: &res-small
-  limits:       { cpus: "1", memory: "512M" }
-  reservations: { cpus: "0.25", memory: "128M" }
-
 x-app-env: &app-env
   APP_ENV:   \${APP_ENV:-production}
   APP_DEBUG: \${APP_DEBUG:-false}
@@ -789,7 +774,6 @@ services:
       H02_UDP_PORT: \${H02_UDP_PORT:-7021}
     deploy:
       <<: *deploy-any
-      resources: *res-app
       labels:
         - "traefik.enable=true"
         - "traefik.swarm.network=${TRAEFIK_NET}"
@@ -841,7 +825,6 @@ services:
       - ${INSTALL_DIR}/volumes/server_tenant_db:/var/www/html/sqlite
     deploy:
       <<: *deploy-storage
-      resources: *res-small
       labels:
         - "traefik.enable=true"
         - "traefik.swarm.network=${TRAEFIK_NET}"
@@ -869,7 +852,6 @@ services:
       H02_UDP_PORT: \${H02_UDP_PORT:-7021}
     deploy:
       <<: *deploy-storage
-      resources: *res-worker
 
   # ── Queue worker ─────────────────────────────────────────────────────────────
   queue:
@@ -889,7 +871,6 @@ services:
       H02_UDP_PORT: \${H02_UDP_PORT:-7021}
     deploy:
       <<: *deploy-any
-      resources: *res-worker
 
   cli:
     image: ${ORG}/server-cli:latest
@@ -899,7 +880,6 @@ services:
       APP_KEY: \${API_APP_KEY}
     deploy:
       <<: *deploy-any
-      resources: *res-worker
 
   # ── JT808 GPS TCP Server (direct host-mode port — preserves device source IP) ─
   jt808:
@@ -935,7 +915,6 @@ services:
       start_period: 30s
     deploy:
       <<: *deploy-protocol
-      resources: *res-small
 
   gt06:
     image: ${ORG}/server-gt06:latest
@@ -960,7 +939,6 @@ services:
       DB_DEVICE_TYPE_ID: 2
     deploy:
       <<: *deploy-protocol
-      resources: *res-small
 
   h02-tcp:
     image: ${ORG}/server-h02-tcp:latest
@@ -985,7 +963,6 @@ services:
       DB_DEVICE_TYPE_ID: 3
     deploy:
       <<: *deploy-protocol
-      resources: *res-small
 
   h02-udp:
     image: ${ORG}/server-h02-udp:latest
@@ -1009,7 +986,6 @@ services:
       DB_DEVICE_TYPE_ID: 3
     deploy:
       <<: *deploy-protocol
-      resources: *res-small
 
   # ── Infrastructure ───────────────────────────────────────────────────────────
   mysql:
@@ -1031,7 +1007,6 @@ services:
       retries: 10
     deploy:
       <<: *deploy-storage
-      resources: *res-db
 
   redis:
     image: redis:${REDIS_VERSION}
@@ -1039,7 +1014,6 @@ services:
     ports: ["6379:6379"]
     deploy:
       <<: *deploy-any
-      resources: *res-small
 
   # Dedicated telemetry-stream Redis. Default wiring still uses the shared
   # \`redis\` service; set STREAM_REDIS_HOST=redis-streams in .env.tad to isolate
@@ -1050,7 +1024,6 @@ services:
     networks: [tad]
     deploy:
       <<: *deploy-any
-      resources: *res-small
 
   soketi:
     image: quay.io/soketi/soketi:${SOKETI_VERSION}
@@ -1079,7 +1052,6 @@ services:
     deploy:
       <<: *deploy-any
       replicas: \${SOKETI_REPLICAS:-2}
-      resources: *res-small
       labels:
         - "traefik.enable=true"
         - "traefik.swarm.network=${TRAEFIK_NET}"
@@ -1104,7 +1076,6 @@ services:
       DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: \${INFLUXDB_TOKEN}
     deploy:
       <<: *deploy-storage
-      resources: *res-db
 
   mailtrap:
     image: axllent/mailpit:${MAILPIT_VERSION}
@@ -1112,7 +1083,6 @@ services:
     ports: ["1025:1025", "8025:8025"]
     deploy:
       <<: *deploy-any
-      resources: *res-small
 
   pma:
     image: phpmyadmin/phpmyadmin:${PMA_VERSION}
@@ -1124,7 +1094,6 @@ services:
       PMA_PASSWORD: \${MYSQL_PASSWORD}
     deploy:
       <<: *deploy-any
-      resources: *res-small
 
 networks:
   tad:
