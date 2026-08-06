@@ -40,11 +40,11 @@
 #   • Your Swarm, your `traefik-net`, and your node labels must already exist —
 #     this script does NOT init a swarm, create networks, or label nodes.
 #   • Run it on a MANAGER node (so it can `docker stack deploy`).
-#   • No placement constraint on mysql/influxdb/cron/server-tenant — they
-#     schedule on any node, same as everything else. Their data (bind-mounted
-#     under INSTALL_DIR/volumes/) lives on whichever node they land on, so on
-#     a single-node Swarm this is a non-issue. If you add worker nodes later,
-#     a reschedule of mysql/influxdb onto a different node starts from an
+#   • No placement constraint on mysql/influxdb/cron/server-tenant/loki/grafana
+#     — they schedule on any node, same as everything else. Their data
+#     (bind-mounted under INSTALL_DIR/volumes/) lives on whichever node they
+#     land on, so on a single-node Swarm this is a non-issue. If you add
+#     worker nodes later, a reschedule onto a different node starts from an
 #     EMPTY volume — pin them yourself with a placement constraint + a node
 #     label at that point, or move to a shared/distributed volume driver.
 # ──────────────────────────────────────────────────────────────────────────────
@@ -72,6 +72,8 @@ REDIS_VERSION="7-alpine"
 SOKETI_VERSION="1.4-16-alpine"
 INFLUXDB_VERSION="2.7-alpine"
 PMA_VERSION="5.2.2"
+GRAFANA_VERSION="11.6.0"
+LOKI_VERSION="3.5.0"
 # Note: TLS/ingress is handled by your EXISTING Traefik on the external
 # `traefik-net` overlay — this stack does NOT ship its own Traefik.
 # Device protocol ports are published directly by Swarm — no frp/tunnel relay.
@@ -284,6 +286,7 @@ detect_existing_env() {
   CFG_PUSHER_SECRET="${PUSHER_APP_SECRET:-}"
   CFG_INFLUX_PASS="${INFLUXDB_PASSWORD:-}"
   CFG_INFLUX_TOKEN="${INFLUXDB_TOKEN:-}"
+  CFG_GRAFANA_ADMIN_PASS="${GRAFANA_ADMIN_PASSWORD:-}"
   CFG_PASSPORT_PRIVATE="${PASSPORT_PRIVATE_KEY_B64:-}"
   CFG_PASSPORT_PUBLIC="${PASSPORT_PUBLIC_KEY_B64:-}"
   # ── WhatsApp (Meta Cloud API) — no interactive prompt, see collect_config() ──
@@ -325,6 +328,7 @@ collect_config() {
     [[ -z "${CFG_PUSHER_SECRET:-}" ]] && CFG_PUSHER_SECRET=$(gen_hex)
     [[ -z "${CFG_INFLUX_PASS:-}"   ]] && CFG_INFLUX_PASS=$(gen_password)
     [[ -z "${CFG_INFLUX_TOKEN:-}"  ]] && CFG_INFLUX_TOKEN=$(gen_hex)
+    [[ -z "${CFG_GRAFANA_ADMIN_PASS:-}" ]] && CFG_GRAFANA_ADMIN_PASS=$(gen_password)
     : "${CFG_SWARM_HOST_DOMAIN:=host-swarm.net}"
     if [[ -z "${CFG_PASSPORT_PRIVATE:-}" ]]; then
       echo -ne "  Generating Passport RSA keys (4096-bit)..." >/dev/tty
@@ -430,6 +434,8 @@ collect_config() {
   CFG_INFLUX_PASS=$(gen_password)
   CFG_INFLUX_TOKEN=$(gen_hex)
   ok "InfluxDB credentials"
+  CFG_GRAFANA_ADMIN_PASS=$(gen_password)
+  ok "Grafana admin credentials  (user: admin)"
 
   echo -ne "  Generating Passport RSA keys (4096-bit)..." >/dev/tty
   local priv_pem
@@ -524,6 +530,9 @@ INFLUXDB_ORG=track-any-device
 INFLUXDB_BUCKET=device_locations
 INFLUXDB_TOKEN=${CFG_INFLUX_TOKEN}
 
+# ── Grafana (log dashboard, at https://grafana.\${APP_DOMAIN}) ────────────────
+GRAFANA_ADMIN_PASSWORD=${CFG_GRAFANA_ADMIN_PASS}
+
 # ── Passport OAuth2 RSA keys ──────────────────────────────────────────────────
 PASSPORT_PRIVATE_KEY_B64=${CFG_PASSPORT_PRIVATE}
 PASSPORT_PUBLIC_KEY_B64=${CFG_PASSPORT_PUBLIC}
@@ -585,6 +594,7 @@ patch_env() {
   }
 
   _ensure_var "SWARM_HOST_DOMAIN" "host-swarm.net"
+  _ensure_var "GRAFANA_ADMIN_PASSWORD" "$(gen_password)"
   _ensure_var "GT06_HOST"         ""
   _ensure_var "GT06_PORT"         "7019"
   _ensure_var "H02_HOST"          ""
@@ -625,6 +635,12 @@ create_directories() {
   run "mkdir -p '${INSTALL_DIR}/volumes/influxdb'"
   run "mkdir -p '${INSTALL_DIR}/volumes/app_storage'"
   run "mkdir -p '${INSTALL_DIR}/volumes/server_tenant_db'"
+  run "mkdir -p '${INSTALL_DIR}/volumes/loki'"
+  run "mkdir -p '${INSTALL_DIR}/volumes/grafana'"
+  run "mkdir -p '${INSTALL_DIR}/docker/loki'"
+  run "mkdir -p '${INSTALL_DIR}/docker/grafana/provisioning/datasources'"
+  run "mkdir -p '${INSTALL_DIR}/docker/grafana/provisioning/dashboards'"
+  run "mkdir -p '${INSTALL_DIR}/docker/promtail'"
   if ! $DRY_RUN; then
     chmod -R 775 "${INSTALL_DIR}/volumes" 2>/dev/null || true
   fi
@@ -642,6 +658,257 @@ create_directories() {
   fi
 
   ok "Directories ready"
+}
+
+# ── Docker config files (Loki, Promtail, Grafana) ────────────────────────────
+write_docker_configs() {
+  if $DRY_RUN; then
+    echo "  [dry] Would write docker config files (loki/grafana/promtail)"
+    return
+  fi
+
+  log "Writing logging stack config files..."
+
+  cat > "${INSTALL_DIR}/docker/loki/loki-config.yml" <<'LOKI'
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+
+common:
+  ring:
+    kvstore:
+      store: inmemory
+    instance_addr: 127.0.0.1
+  replication_factor: 1
+  path_prefix: /loki
+
+schema_config:
+  configs:
+    - from: "2024-01-01"
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+storage_config:
+  filesystem:
+    directory: /loki/chunks
+
+limits_config:
+  retention_period: 168h
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
+LOKI
+
+  cat > "${INSTALL_DIR}/docker/grafana/provisioning/datasources/loki.yml" <<'GRAFANA_DS'
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    isDefault: true
+    editable: false
+GRAFANA_DS
+
+  cat > "${INSTALL_DIR}/docker/grafana/provisioning/dashboards/dashboards.yml" <<'GRAFANA_DASH'
+apiVersion: 1
+
+providers:
+  - name: TAD
+    folder: TAD Platform
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/dashboards
+GRAFANA_DASH
+
+  cat > "${INSTALL_DIR}/docker/grafana/provisioning/dashboards/platform-logs.json" <<'DASHBOARD'
+{
+  "title": "TAD Platform — Logs & Errors",
+  "uid": "tad-platform-logs",
+  "tags": ["tad", "logs"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "30s",
+  "time": {"from": "now-1h", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "title": "Log Volume by Service",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "options": {"legend": {"displayMode": "table", "placement": "right"}},
+      "targets": [{
+        "datasource": {"type": "loki"},
+        "expr": "sum by(container) (count_over_time({container=~\".+\"}[$__interval]))",
+        "legendFormat": "{{container}}"
+      }]
+    },
+    {
+      "id": 2,
+      "title": "Error & Warning Rate by Service",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"fixedColor": "red", "mode": "fixed"},
+          "custom": {"lineWidth": 2}
+        }
+      },
+      "options": {"legend": {"displayMode": "table", "placement": "right"}},
+      "targets": [{
+        "datasource": {"type": "loki"},
+        "expr": "sum by(container) (count_over_time({container=~\".+\", level=~\"error|fatal|critical\"}[$__interval]))",
+        "legendFormat": "{{container}}"
+      }]
+    },
+    {
+      "id": 3,
+      "title": "Protocol Servers — Live Logs",
+      "type": "logs",
+      "gridPos": {"h": 12, "w": 12, "x": 0, "y": 8},
+      "options": {
+        "dedupStrategy": "none",
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [{
+        "datasource": {"type": "loki"},
+        "expr": "{container=~\"jt808|gt06|h02-tcp|h02-udp\"}",
+        "legendFormat": ""
+      }]
+    },
+    {
+      "id": 4,
+      "title": "All Services — Errors & Warnings",
+      "type": "logs",
+      "gridPos": {"h": 12, "w": 12, "x": 12, "y": 8},
+      "options": {
+        "dedupStrategy": "none",
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [{
+        "datasource": {"type": "loki"},
+        "expr": "{container=~\".+\", level=~\"error|warn|warning|fatal|critical\"}",
+        "legendFormat": ""
+      }]
+    },
+    {
+      "id": 5,
+      "title": "GT06 Server Logs",
+      "type": "logs",
+      "gridPos": {"h": 10, "w": 8, "x": 0, "y": 20},
+      "options": {
+        "dedupStrategy": "none",
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [{
+        "datasource": {"type": "loki"},
+        "expr": "{container=\"gt06\"}",
+        "legendFormat": ""
+      }]
+    },
+    {
+      "id": 6,
+      "title": "H02 Server Logs (TCP + UDP)",
+      "type": "logs",
+      "gridPos": {"h": 10, "w": 8, "x": 8, "y": 20},
+      "options": {
+        "dedupStrategy": "none",
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [{
+        "datasource": {"type": "loki"},
+        "expr": "{container=~\"h02-tcp|h02-udp\"}",
+        "legendFormat": ""
+      }]
+    },
+    {
+      "id": 7,
+      "title": "JT808 Server Logs",
+      "type": "logs",
+      "gridPos": {"h": 10, "w": 8, "x": 16, "y": 20},
+      "options": {
+        "dedupStrategy": "none",
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [{
+        "datasource": {"type": "loki"},
+        "expr": "{container=\"jt808\"}",
+        "legendFormat": ""
+      }]
+    }
+  ]
+}
+DASHBOARD
+
+  # Swarm-aware service discovery: unlike Compose (where container_name is the
+  # literal service name), Swarm names containers <stack>_<service>.<slot>.<id>.
+  # Docker itself stamps every container with a com.docker.swarm.service.name
+  # label regardless of orchestration mode — key off that instead of a
+  # hardcoded container-name list, so this automatically covers every tad_*
+  # service (present and future) rather than an explicit allowlist. Runs as a
+  # global service (one per node, see generate_stack) so it only ever sees —
+  # and only needs to see — the containers actually running on its own node.
+  cat > "${INSTALL_DIR}/docker/promtail/promtail-config.yml" <<'PROMTAIL'
+server:
+  http_listen_port: 9080
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: swarm_containers
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_label_com_docker_swarm_service_name']
+        regex: 'tad_(.+)'
+        target_label: container
+      - source_labels: ['__meta_docker_container_label_com_docker_swarm_service_name']
+        regex: 'tad_(.+)'
+        action: keep
+      - source_labels: ['__meta_docker_container_log_stream']
+        target_label: stream
+    pipeline_stages:
+      - json:
+          expressions:
+            level: level
+            msg:   msg
+      - labels:
+          level:
+PROMTAIL
+
+  ok "Logging stack config files written"
 }
 
 # ── Swarm stack file generation ───────────────────────────────────────────────
@@ -1070,6 +1337,53 @@ services:
         - "traefik.http.routers.tad-pma.tls=true"
         - "traefik.http.routers.tad-pma.service=tad-pma"
 
+  # ── Logging: Loki (log store) + Promtail (per-node collector) + Grafana ──────
+  loki:
+    image: grafana/loki:${LOKI_VERSION}
+    networks: [tad]
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - ${INSTALL_DIR}/volumes/loki:/loki
+      - ${INSTALL_DIR}/docker/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+    deploy:
+      <<: *deploy-any
+
+  # mode: global — one Promtail per Swarm node, each reading only that node's
+  # own Docker socket (docker_sd_configs can't see containers on other nodes).
+  # Bind-mounting the host's docker.sock grants this container root-equivalent
+  # access to that node's Docker daemon — inherent to this discovery method,
+  # not something scoped down further here.
+  promtail:
+    image: grafana/promtail:${LOKI_VERSION}
+    networks: [tad]
+    command: -config.file=/etc/promtail/promtail-config.yml
+    volumes:
+      - ${INSTALL_DIR}/docker/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    deploy:
+      mode: global
+      restart_policy: { condition: any }
+
+  grafana:
+    image: grafana/grafana:${GRAFANA_VERSION}
+    networks: [tad, traefik-net]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: \${GRAFANA_ADMIN_PASSWORD}
+    volumes:
+      - ${INSTALL_DIR}/volumes/grafana:/var/lib/grafana
+      - ${INSTALL_DIR}/docker/grafana/provisioning:/etc/grafana/provisioning:ro
+    deploy:
+      <<: *deploy-any
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NET}"
+        - "traefik.http.services.tad-grafana.loadbalancer.server.port=3000"
+        - "traefik.http.routers.tad-grafana.rule=Host(\`grafana.\${APP_DOMAIN}\`)"
+        - "traefik.http.routers.tad-grafana.entrypoints=websecure"
+        - "traefik.http.routers.tad-grafana.tls=true"
+        - "traefik.http.routers.tad-grafana.service=tad-grafana"
+
 networks:
   tad:
     driver: overlay
@@ -1187,6 +1501,7 @@ show_status() {
   echo "  Realtime WS:  https://ws.${APP_DOMAIN:-track-any-device.com}      | https://ws-tad.${shd}"
   echo "  Public track: https://${TRACKER_HOST:-track.${APP_DOMAIN:-track-any-device.com}}  (server-tenant :80)"
   echo "  phpMyAdmin:   https://pma.${APP_DOMAIN:-track-any-device.com}"
+  echo "  Grafana:      https://grafana.${APP_DOMAIN:-track-any-device.com}  (user: admin, password: GRAFANA_ADMIN_PASSWORD in ${ENV_FILE})"
   echo ""
   echo -e "${BOLD}── Public tracker (server-tenant) ──────────────────────────────${RESET}"
   echo "  Routed by your Traefik: Host(${TRACKER_HOST:-track.${APP_DOMAIN:-track-any-device.com}}) → :80"
@@ -1225,6 +1540,8 @@ main() {
     set -a; source "${ENV_FILE}" 2>/dev/null || true; set +a
     patch_env
     set -a; source "${ENV_FILE}" 2>/dev/null || true; set +a
+    create_directories
+    write_docker_configs
     generate_stack
     stack_deploy
     wait_for_app
@@ -1235,6 +1552,7 @@ main() {
     collect_config
     create_directories
     write_env
+    write_docker_configs
     generate_stack
     stack_deploy
     wait_for_db
@@ -1247,10 +1565,10 @@ main() {
     echo -e "${RESET}"
     echo "  Next steps:"
     echo "    1. Ensure your Traefik is attached to the '${TRAEFIK_NET}' network so it"
-    echo "       can route the tad-* routers (api/ws/tracker/pma)."
+    echo "       can route the tad-* routers (api/ws/tracker/pma/grafana)."
     echo "    2. Point DNS (real domains + *-tad.${CFG_SWARM_HOST_DOMAIN:-host-swarm.net}"
     echo "       + the public tracker ${CFG_TRACKER_HOST:-track.${CFG_DOMAIN}}"
-    echo "       + pma.${CFG_DOMAIN})"
+    echo "       + pma.${CFG_DOMAIN} + grafana.${CFG_DOMAIN})"
     echo "       at the node(s) where your Traefik publishes :443."
     echo "       Public tracker: copy the Tenant ID (X-Tenant-Id) + access key (tk_…)"
     echo "       from /admin organisations into ${ENV_FILE}"
