@@ -1054,14 +1054,21 @@ services:
 
   pma:
     image: phpmyadmin/phpmyadmin:${PMA_VERSION}
-    networks: [tad]
-    ports: ["3333:80"]
+    networks: [tad, traefik-net]
     environment:
       PMA_HOST:     mysql
       PMA_USER:     \${MYSQL_USER}
       PMA_PASSWORD: \${MYSQL_PASSWORD}
     deploy:
       <<: *deploy-any
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NET}"
+        - "traefik.http.services.tad-pma.loadbalancer.server.port=80"
+        - "traefik.http.routers.tad-pma.rule=Host(\`pma.\${APP_DOMAIN}\`)"
+        - "traefik.http.routers.tad-pma.entrypoints=websecure"
+        - "traefik.http.routers.tad-pma.tls=true"
+        - "traefik.http.routers.tad-pma.service=tad-pma"
 
 networks:
   tad:
@@ -1179,7 +1186,7 @@ show_status() {
   echo "  REST API:     https://api.${APP_DOMAIN:-track-any-device.com}     | https://api-tad.${shd}"
   echo "  Realtime WS:  https://ws.${APP_DOMAIN:-track-any-device.com}      | https://ws-tad.${shd}"
   echo "  Public track: https://${TRACKER_HOST:-track.${APP_DOMAIN:-track-any-device.com}}  (server-tenant :80)"
-  echo "  phpMyAdmin:   http://<node-ip>:3333"
+  echo "  phpMyAdmin:   https://pma.${APP_DOMAIN:-track-any-device.com}"
   echo ""
   echo -e "${BOLD}── Public tracker (server-tenant) ──────────────────────────────${RESET}"
   echo "  Routed by your Traefik: Host(${TRACKER_HOST:-track.${APP_DOMAIN:-track-any-device.com}}) → :80"
@@ -1240,9 +1247,10 @@ main() {
     echo -e "${RESET}"
     echo "  Next steps:"
     echo "    1. Ensure your Traefik is attached to the '${TRAEFIK_NET}' network so it"
-    echo "       can route the tad-* routers (api/ws/tracker)."
+    echo "       can route the tad-* routers (api/ws/tracker/pma)."
     echo "    2. Point DNS (real domains + *-tad.${CFG_SWARM_HOST_DOMAIN:-host-swarm.net}"
-    echo "       + the public tracker ${CFG_TRACKER_HOST:-track.${CFG_DOMAIN}})"
+    echo "       + the public tracker ${CFG_TRACKER_HOST:-track.${CFG_DOMAIN}}"
+    echo "       + pma.${CFG_DOMAIN})"
     echo "       at the node(s) where your Traefik publishes :443."
     echo "       Public tracker: copy the Tenant ID (X-Tenant-Id) + access key (tk_…)"
     echo "       from /admin organisations into ${ENV_FILE}"
